@@ -1,0 +1,10 @@
+[tool.black]
+line-length = 100
+extend-exclude = "(^|/)(yolo|runs)/"
+
+[tool.ruff]
+line-length = 100
+exclude = ["yolo", "runs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
