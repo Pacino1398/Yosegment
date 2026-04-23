@@ -2,12 +2,15 @@
 # 1. 运行产物与实验数据 (核心修改)
 # ==========================================
 # 允许 Git/AI 感知目录结构，但忽略所有图片/二进制产物
+runs/**
 runs/**/*.jpg
 runs/**/*.png
 runs/**/*.jpeg
 runs/**/*.bmp
 pathplan/**/*.jpg
 pathplan/**/*.png
+pathplan/**/*.txt
+segment/**/*.txt
 segment/**/*.jpg
 segment/**/*.png
 
