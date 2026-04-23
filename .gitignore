@@ -11,3 +11,4 @@ env/
 .idea/
 .vscode/*.log
 runs/
+.claude/worktrees/
