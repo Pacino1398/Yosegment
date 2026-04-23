@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Mapping
 
-from app.mapping.grid_map import GridMapHandler
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
+from app.config import DEFAULT_CONFIG
+from app.mapping.grid_map import GridMapHandler, load_mask_entries
+from app.paths import resolve_path
 
 Cell2D = tuple[int, int]
 Voxel3D = tuple[int, int, int]
 OctreeNodeKey = tuple[int, int, int, int]
+DEFAULT_UAV_ALTITUDE = 15.0
 
 
 @dataclass(slots=True)
@@ -63,6 +71,25 @@ class OctoMap:
         self.grid_scale = grid_scale
         self.grid_handler = GridMapHandler(grid_w, grid_h, grid_scale)
         self._reset_state()
+
+    @staticmethod
+    def infer_grid_size(mask_dir: str | Path, grid_scale: int) -> tuple[int, int]:
+        mask_path = Path(mask_dir)
+        first_mask = None
+        if mask_path.exists():
+            for mask_file in sorted(mask_path.glob("*.png")):
+                first_mask = plt.imread(mask_file)
+                if first_mask is not None:
+                    break
+
+        if first_mask is None:
+            return 64, 64
+
+        if getattr(first_mask, "ndim", 0) == 3:
+            mask_h, mask_w = first_mask.shape[:2]
+        else:
+            mask_h, mask_w = first_mask.shape
+        return max(1, mask_w // grid_scale), max(1, mask_h // grid_scale)
 
     def _reset_state(self):
         self.obstacles: set[Cell2D] = set()
@@ -380,6 +407,88 @@ class OctoMap:
             "revision": self.revision,
         }
 
+    def show_voxels_3d(
+        self,
+        include_soft: bool = True,
+        elev: float = 28.0,
+        azim: float = -58.0,
+        uav_altitude: float = DEFAULT_UAV_ALTITUDE,
+    ):
+        figure = plt.figure(figsize=(10, 8))
+        axis = figure.add_subplot(111, projection="3d")
+
+        hard_columns = sorted((column for column in self.columns.values() if column.blocked), key=lambda column: column.cell)
+        soft_columns = sorted(
+            (column for column in self.columns.values() if column.traversable and not column.blocked),
+            key=lambda column: column.cell,
+        ) if include_soft else []
+
+        if hard_columns:
+            xs = [column.cell[0] for column in hard_columns]
+            ys = [column.cell[1] for column in hard_columns]
+            zs = [0.0] * len(hard_columns)
+            dx = [1.0] * len(hard_columns)
+            dy = [1.0] * len(hard_columns)
+            dz = [float(column.height) for column in hard_columns]
+            axis.bar3d(xs, ys, zs, dx, dy, dz, color="#2f2f2f", alpha=0.85, shade=True)
+
+        if soft_columns:
+            xs = [column.cell[0] for column in soft_columns]
+            ys = [column.cell[1] for column in soft_columns]
+            zs = [0.0] * len(soft_columns)
+            dx = [1.0] * len(soft_columns)
+            dy = [1.0] * len(soft_columns)
+            dz = [float(column.height) for column in soft_columns]
+            axis.bar3d(xs, ys, zs, dx, dy, dz, color="#2ca02c", alpha=0.35, shade=True)
+
+        if self.target_point is not None:
+            tx, ty = self.target_point
+            axis.scatter(
+                [tx + 0.5],
+                [ty + 0.5],
+                [0.5],
+                color="red",
+                s=70,
+                depthshade=False,
+            )
+
+        uav_x = self.grid_w / 2.0
+        uav_y = self.grid_h / 2.0
+        uav_z = max(0.0, float(uav_altitude))
+        axis.scatter(
+            [uav_x],
+            [uav_y],
+            [uav_z],
+            color="#1f77b4",
+            s=90,
+            depthshade=False,
+        )
+
+        axis.set_xlim(0, max(self.grid_w, 1))
+        axis.set_ylim(0, max(self.grid_h, 1))
+        axis.set_zlim(0, max(float(self.max_z), uav_z + 1.0, 1.0))
+        axis.set_xlabel("X")
+        axis.set_ylabel("Y")
+        axis.set_zlabel("Z")
+        axis.set_title(f"OctoMap Columns | UAV z={uav_z:.1f}")
+        axis.view_init(elev=elev, azim=azim)
+
+        legend_items = [
+            Line2D([0], [0], marker="s", color="w", label="hard obstacle", markerfacecolor="#2f2f2f", markersize=10),
+            Line2D([0], [0], marker="o", color="w", label="uav", markerfacecolor="#1f77b4", markersize=8),
+        ]
+        if include_soft:
+            legend_items.append(
+                Line2D([0], [0], marker="s", color="w", label="soft obstacle", markerfacecolor="#2ca02c", markersize=10)
+            )
+        if self.target_point is not None:
+            legend_items.append(
+                Line2D([0], [0], marker="o", color="w", label="target", markerfacecolor="red", markersize=8)
+            )
+        axis.legend(handles=legend_items, loc="upper right")
+        plt.tight_layout()
+        plt.show()
+
     def update_columns(
         self,
         added_or_changed: Mapping[Cell2D, ColumnState | Mapping[str, Any] | int | None],
@@ -481,3 +590,40 @@ class OctoMap:
             changed_nodes=self._changed_node_keys(old_nodes),
             revision=self.revision,
         )
+
+
+def get_default_mask_dir() -> Path:
+    return DEFAULT_CONFIG.default_mask_dir.resolve()
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build and display a 3D octomap voxel view from segmentation masks.")
+    parser.add_argument("--mask-dir", type=str, default=None, help="Directory containing mask PNG files.")
+    parser.add_argument("--grid-scale", type=int, default=DEFAULT_CONFIG.default_grid_scale, help="Pixel-to-grid scale.")
+    parser.add_argument("--hide-soft", action="store_true", help="Hide soft traversable voxels in the 3D view.")
+    parser.add_argument("--uav-altitude", type=float, default=DEFAULT_UAV_ALTITUDE, help="Default UAV altitude in the 3D view.")
+    parser.add_argument("--elev", type=float, default=28.0, help="3D camera elevation angle.")
+    parser.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth angle.")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    mask_dir = resolve_path(args.mask_dir, get_default_mask_dir())
+    if not mask_dir.exists():
+        raise FileNotFoundError(f"mask dir not found: {mask_dir}")
+
+    grid_w, grid_h = OctoMap.infer_grid_size(mask_dir, args.grid_scale)
+    octomap = OctoMap(grid_w=grid_w, grid_h=grid_h, grid_scale=args.grid_scale)
+    mask_list = load_mask_entries(mask_dir, octomap.grid_handler)
+    octomap.masks_to_obstacle(mask_list)
+    octomap.show_voxels_3d(
+        include_soft=not args.hide_soft,
+        elev=args.elev,
+        azim=args.azim,
+        uav_altitude=args.uav_altitude,
+    )
+
+
+if __name__ == "__main__":
+    main()
