@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 from app.config import DEFAULT_CONFIG
 from app.mapping.grid_map import GridMapHandler, load_mask_entries
 from app.paths import resolve_path
+from app.planning.pathplan_batch import get_latest_segmentation_run_dir
 
 Cell2D = tuple[int, int]
 DEFAULT_UAV_ALTITUDE = 15.0
@@ -236,14 +237,12 @@ class OctoMap:
             "revision": self.revision,
         }
 
-    def show_voxels_3d(
+    def show_local_map_3d(
         self,
-        include_soft: bool = True,
         elev: float = 28.0,
         azim: float = -58.0,
         uav_altitude: float = DEFAULT_UAV_ALTITUDE,
     ):
-        del include_soft
         figure = plt.figure(figsize=(10, 8))
         axis = figure.add_subplot(111, projection="3d")
 
@@ -268,10 +267,10 @@ class OctoMap:
         if canopy_columns:
             xs = [column.cell[0] for column in canopy_columns]
             ys = [column.cell[1] for column in canopy_columns]
-            zs = [column.display_base_z for column in canopy_columns]
+            zs = [column.collision_base_z for column in canopy_columns]
             dx = [1.0] * len(canopy_columns)
             dy = [1.0] * len(canopy_columns)
-            dz = [column.height for column in canopy_columns]
+            dz = [max(column.top_z - column.collision_base_z, 0.1) for column in canopy_columns]
             axis.bar3d(xs, ys, zs, dx, dy, dz, color="#2ca02c", alpha=0.55, shade=True)
 
         if self.target_point is not None:
@@ -324,7 +323,8 @@ class OctoMap:
 
 
 def get_default_mask_dir() -> Path:
-    return DEFAULT_CONFIG.default_mask_dir.resolve()
+    latest_run_dir = get_latest_segmentation_run_dir(DEFAULT_CONFIG.runs_dir / "segment")
+    return (latest_run_dir / "masks").resolve()
 
 
 def parse_args() -> argparse.Namespace:
@@ -347,10 +347,10 @@ def main() -> None:
     octomap = OctoMap(grid_w=grid_w, grid_h=grid_h, grid_scale=args.grid_scale)
     mask_list = load_mask_entries(mask_dir, octomap.grid_handler)
     octomap.masks_to_obstacle(mask_list)
-    octomap.show_voxels_3d(elev=args.elev, azim=args.azim, uav_altitude=args.uav_altitude)
+    octomap.show_local_map_3d(elev=args.elev, azim=args.azim, uav_altitude=args.uav_altitude)
 
 
 if __name__ == "__main__":
     main()
 
-# python octomap.py --mask-dir D:\qingyu\Yosegment\runs\segment\exp2\masks
+# python -m app.mapping.octomap --mask-dir runs/segment/exp2/masks
