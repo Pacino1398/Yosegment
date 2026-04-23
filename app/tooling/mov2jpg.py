@@ -1,62 +1,61 @@
-import cv2
+# pip install decord turbojpeg
 import os
+import time
 from pathlib import Path
+from decord import VideoReader, cpu
+from turbojpeg import TurboJPEG
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
-def extract_frames_opencv(fps_target=1):
-    # 源视频路径
-    input_path = Path(r"D:\biaozhu\biaozhu_qingyu\process")
-    # 统一输出路径
-    output_base = Path(r"D:\biaozhu\biaozhu_qingyu\process_out")
+jpeg = TurboJPEG()
+
+def save_img_turbo(path, frame):
+    with open(path, 'wb') as f:
+        f.write(jpeg.encode(frame, quality=90))
+
+def process_video_god_mode(video_info):
+    video_file, output_base, fps_target = video_info
     
-    video_extensions = {".mp4", ".avi", ".mov", ".mkv"}
+    vr = VideoReader(str(video_file), ctx=cpu(0))
+    video_fps = vr.get_avg_fps()
+    
+    hop = round(video_fps / fps_target)
+    indices = list(range(0, len(vr), hop))
+    
+    print(f"{video_file.name} | 待提取: {len(indices)} 帧")
 
-    if not input_path.exists():
-        print(f"❌ 路径不存在: {input_path}")
-        return
+    with ThreadPoolExecutor(max_workers=10) as io_executor:
+        for i, frame_idx in enumerate(indices):
+            # 获取帧（decord 的 get_batch 或直接索引非常快）
+            frame = vr[frame_idx].asnumpy()
+            # 转换为 BGR (decord 默认 RGB)
+            frame = frame[:, :, ::-1]
+            
+            img_name = output_base / f"{video_file.stem}_{i+1:05d}.jpg"
+            io_executor.submit(save_img_turbo, img_name, frame)
 
-    # 创建统一的输出根目录
+    return f" {video_file.name} 完成"
+
+def main():
+    input_path = Path(r"D:\biaozhu\biaozhu_qingyu\process") 
+    output_base = Path(r"D:\biaozhu\biaozhu_qingyu\process_out") 
     output_base.mkdir(parents=True, exist_ok=True)
 
-    for video_file in input_path.iterdir():
-        if video_file.suffix.lower() in video_extensions:
-            # 获取视频名（例如 260414_01），作为图片命名的前缀
-            video_name_stem = video_file.stem
-            
-            # 打开视频文件
-            cap = cv2.VideoCapture(str(video_file))
-            if not cap.isOpened():
-                print(f"❌ 无法打开视频: {video_file.name}")
-                continue
+    video_tasks = [(f, output_base, 1) for f in input_path.iterdir() if f.suffix.lower() in {".mp4", ".mov"}]
+    
+    if not video_tasks:
+        print("📂 文件夹里没找到视频，请检查路径！")
+        return
 
-            # 获取视频自带的帧率
-            video_fps = cap.get(cv2.CAP_PROP_FPS)
-            # 计算每隔多少帧提取一次
-            hop = round(video_fps / fps_target)
-            if hop < 1: hop = 1
-            
-            print(f"⏳ 正在处理: {video_file.name} (原始FPS: {video_fps}, 提取间隔: {hop}帧)")
+    print(f"🚀 开始提取 {len(video_tasks)} 个视频...")
+    start = time.time()
 
-            frame_count = 0
-            saved_count = 0
-            
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                
-                # 只保存符合间隔的帧
-                if frame_count % hop == 0:
-                    saved_count += 1
-                    
-                    img_name = output_base / f"{video_name_stem}_{saved_count:05d}.jpg"
-                    
-                    # 保存图片，100代表最高质量
-                    cv2.imwrite(str(img_name), frame, [cv2.IMWRITE_JPEG_QUALITY, 100])
-                
-                frame_count += 1
-            
-            cap.release()
-            print(f"✅ {video_file.name} 完成！提取了 {saved_count} 张图片")
+    with ProcessPoolExecutor(max_workers=6) as p_executor:
+        results = list(p_executor.map(process_video_god_mode, video_tasks))
+        
+    for res in results:
+        print(res)
+
+    print(f"\n✨ 总耗时: {time.time() - start:.2f}s")
 
 if __name__ == "__main__":
-    extract_frames_opencv()
+    main()  
