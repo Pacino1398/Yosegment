@@ -1,67 +1,45 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
+import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from app.config import DEFAULT_CONFIG
 from app.mapping.grid_map import GridMapHandler, load_mask_entries
 from app.paths import resolve_path
+from app.planning.pathplan_batch import get_latest_segmentation_run_dir
 
 Cell2D = tuple[int, int]
-Voxel3D = tuple[int, int, int]
-OctreeNodeKey = tuple[int, int, int, int]
 DEFAULT_UAV_ALTITUDE = 15.0
+TREE_CANOPY_DOWNWARD_EXPANSION = 1.0
+CANOPY_CLASSES = {4, 6}
+GROUNDED_CLASSES = {1, 3, 5, 9}
+HOUSE_CLASS = 9
 
 
 @dataclass(slots=True)
 class ColumnState:
     cell: Cell2D
-    height: int
+    height: float
     class_id: int | None = None
-    blocked: bool = True
-    traversable: bool = False
+    observed: bool = True
+    display_base_z: float = 0.0
+    collision_base_z: float = 0.0
     terrain_penalty: float = 0.0
-
-
-@dataclass(slots=True)
-class VoxelRecord:
-    voxel: Voxel3D
-    hard_occupied: bool
-    soft_occupied: bool
-    class_id: int | None
-    terrain_penalty: float
-    column: Cell2D
-    revision: int
-
-
-@dataclass(slots=True)
-class OctreeNode:
-    key: OctreeNodeKey
-    occupied_count: int = 0
-    soft_count: int = 0
-    max_penalty: float = 0.0
-    max_height: int = 0
-    class_counts: dict[int, int] = field(default_factory=dict)
+    mode: str = "grounded"
 
     @property
-    def dominant_class_id(self) -> int | None:
-        if not self.class_counts:
-            return None
-        return max(self.class_counts.items(), key=lambda item: (item[1], -item[0]))[0]
-
-
-@dataclass(slots=True)
-class OctoMapDelta:
-    added_voxels: set[Voxel3D] = field(default_factory=set)
-    removed_voxels: set[Voxel3D] = field(default_factory=set)
-    changed_columns: set[Cell2D] = field(default_factory=set)
-    changed_nodes: set[OctreeNodeKey] = field(default_factory=set)
-    revision: int = 0
+    def top_z(self) -> float:
+        return self.display_base_z + self.height
 
 
 class OctoMap:
@@ -101,10 +79,7 @@ class OctoMap:
         self.mask_instances: list[dict[str, object]] = []
         self.target_point: Cell2D | None = None
         self.columns: dict[Cell2D, ColumnState] = {}
-        self.voxels: dict[Voxel3D, VoxelRecord] = {}
-        self.octree_nodes: dict[OctreeNodeKey, OctreeNode] = {}
-        self.max_z = 0
-        self.root_size = 1
+        self.max_z = 0.0
         self.revision = 0
 
     def _sync_from_grid_handler(self):
@@ -117,208 +92,102 @@ class OctoMap:
         self.mask_instances = list(self.grid_handler.mask_instances)
         self.target_point = self.grid_handler.target_point
 
-    def _next_power_of_two(self, value: int) -> int:
-        size = 1
-        target = max(1, int(value))
-        while size < target:
-            size *= 2
-        return size
-
-    def _node_signature(self, node: OctreeNode) -> tuple[object, ...]:
-        return (
-            node.occupied_count,
-            node.soft_count,
-            node.max_penalty,
-            node.max_height,
-            tuple(sorted(node.class_counts.items())),
-        )
-
-    def _snapshot_nodes(self) -> dict[OctreeNodeKey, tuple[object, ...]]:
-        return {key: self._node_signature(node) for key, node in self.octree_nodes.items()}
-
-    def _changed_node_keys(self, old_nodes: dict[OctreeNodeKey, tuple[object, ...]]) -> set[OctreeNodeKey]:
-        new_nodes = self._snapshot_nodes()
-        changed_keys = set(old_nodes) | set(new_nodes)
-        return {key for key in changed_keys if old_nodes.get(key) != new_nodes.get(key)}
-
-    def _normalize_column_state(self, cell: Cell2D, value: ColumnState | Mapping[str, Any] | int | None) -> ColumnState | None:
+    def _normalize_column_state(self, cell: Cell2D, value: ColumnState | Mapping[str, Any] | int | float | None) -> ColumnState | None:
         if value is None:
             return None
 
         if isinstance(value, ColumnState):
-            normalized = ColumnState(
+            column = ColumnState(
                 cell=cell,
-                height=max(0, int(value.height)),
+                height=max(0.0, float(value.height)),
                 class_id=value.class_id,
-                blocked=bool(value.blocked),
-                traversable=bool(value.traversable),
+                observed=bool(value.observed),
+                display_base_z=float(value.display_base_z),
+                collision_base_z=float(value.collision_base_z),
                 terrain_penalty=float(value.terrain_penalty),
+                mode=str(value.mode),
             )
         elif isinstance(value, Mapping):
-            height = max(0, int(value.get("height", 1)))
-            blocked = bool(value.get("blocked", True))
-            traversable = bool(value.get("traversable", False))
             class_id = value.get("class_id")
-            class_id = None if class_id is None else int(class_id)
-            terrain_penalty = float(value.get("terrain_penalty", 0.0))
-            normalized = ColumnState(
+            column = ColumnState(
                 cell=cell,
-                height=height,
-                class_id=class_id,
-                blocked=blocked,
-                traversable=traversable,
-                terrain_penalty=terrain_penalty,
+                height=max(0.0, float(value.get("height", 1.0))),
+                class_id=None if class_id is None else int(class_id),
+                observed=bool(value.get("observed", True)),
+                display_base_z=float(value.get("display_base_z", 0.0)),
+                collision_base_z=float(value.get("collision_base_z", 0.0)),
+                terrain_penalty=float(value.get("terrain_penalty", 0.0)),
+                mode=str(value.get("mode", "grounded")),
             )
         else:
-            normalized = ColumnState(cell=cell, height=max(0, int(value)), blocked=True)
+            column = ColumnState(cell=cell, height=max(0.0, float(value)))
 
-        if normalized.height <= 0:
+        if column.height <= 0.0:
             return None
-        if normalized.blocked:
-            normalized.traversable = False
-            normalized.terrain_penalty = 0.0
-        elif normalized.traversable:
-            normalized.terrain_penalty = max(0.0, float(normalized.terrain_penalty))
+        column.display_base_z = max(0.0, column.display_base_z)
+        column.collision_base_z = max(0.0, min(column.collision_base_z, column.top_z))
+        return column
+
+    def _build_column_for_cell(self, cell: Cell2D, class_id: int | None, height: int | float) -> ColumnState:
+        top_z = max(1.0, float(height))
+        terrain_penalty = float(self.terrain_penalties.get(cell, 0.0))
+
+        if class_id in CANOPY_CLASSES:
+            collision_base_z = max(0.0, top_z - TREE_CANOPY_DOWNWARD_EXPANSION)
+            mode = "canopy"
         else:
-            return None
-        return normalized
+            collision_base_z = 0.0
+            mode = "grounded"
+
+        if class_id == HOUSE_CLASS:
+            collision_base_z = 0.0
+            mode = "grounded"
+
+        return ColumnState(
+            cell=cell,
+            height=top_z,
+            class_id=class_id,
+            observed=True,
+            display_base_z=0.0,
+            collision_base_z=collision_base_z,
+            terrain_penalty=terrain_penalty,
+            mode=mode,
+        )
 
     def _build_columns_from_synced_state(self):
         self.columns = {}
-        cells = set(self.blocked_obstacles) | set(self.traversable_obstacles) | set(self.obstacle_heights)
+        cells = set(self.obstacles) | set(self.obstacle_heights)
         for cell in cells:
-            height = max(1, int(self.obstacle_heights.get(cell, 1)))
-            blocked = cell in self.blocked_obstacles
-            traversable = cell in self.traversable_obstacles and not blocked
-            column = ColumnState(
-                cell=cell,
-                height=height,
-                class_id=self.obstacle_class_ids.get(cell),
-                blocked=blocked,
-                traversable=traversable,
-                terrain_penalty=self.terrain_penalties.get(cell, 0.0),
-            )
-            self.columns[cell] = column
+            class_id = self.obstacle_class_ids.get(cell)
+            height = self.obstacle_heights.get(cell, 1)
+            self.columns[cell] = self._build_column_for_cell(cell, class_id, height)
 
     def _build_columns_from_obstacle_set(self, obstacle_set):
         self.columns = {}
         for cell in set(obstacle_set or set()):
-            self.columns[cell] = ColumnState(cell=cell, height=1, blocked=True)
+            self.columns[cell] = ColumnState(cell=cell, height=1.0, observed=True)
 
-    def _rebuild_2d_views_from_columns(self):
+    def _rebuild_local_views(self):
         self.obstacles = set()
         self.blocked_obstacles = set()
         self.traversable_obstacles = set()
         self.terrain_penalties = {}
         self.obstacle_heights = {}
         self.obstacle_class_ids = {}
+        self.max_z = 0.0
 
         for cell, column in self.columns.items():
-            if column.height <= 0:
+            if column.height <= 0.0:
                 continue
             self.obstacles.add(cell)
-            self.obstacle_heights[cell] = column.height
+            self.blocked_obstacles.add(cell)
+            self.obstacle_heights[cell] = int(round(column.height))
             if column.class_id is not None:
                 self.obstacle_class_ids[cell] = column.class_id
-            if column.blocked:
-                self.blocked_obstacles.add(cell)
-            elif column.traversable:
-                self.traversable_obstacles.add(cell)
-                if column.terrain_penalty > 0.0:
-                    self.terrain_penalties[cell] = column.terrain_penalty
-
-    def _column_to_voxels(self, column: ColumnState) -> dict[Voxel3D, VoxelRecord]:
-        voxels: dict[Voxel3D, VoxelRecord] = {}
-        if column.height <= 0:
-            return voxels
-        if not column.blocked and not column.traversable:
-            return voxels
-
-        x, y = column.cell
-        for z in range(column.height):
-            voxel = (x, y, z)
-            voxels[voxel] = VoxelRecord(
-                voxel=voxel,
-                hard_occupied=column.blocked,
-                soft_occupied=column.traversable and not column.blocked,
-                class_id=column.class_id,
-                terrain_penalty=column.terrain_penalty if column.traversable and not column.blocked else 0.0,
-                column=column.cell,
-                revision=self.revision,
-            )
-        return voxels
-
-    def _node_keys_for_voxel(self, voxel: Voxel3D) -> list[OctreeNodeKey]:
-        x, y, z = voxel
-        keys: list[OctreeNodeKey] = []
-        cell_span = self.root_size
-        depth = 0
-
-        while True:
-            keys.append((depth, x // cell_span, y // cell_span, z // cell_span))
-            if cell_span == 1:
-                break
-            cell_span //= 2
-            depth += 1
-
-        return keys
-
-    def _rebuild_voxels_from_columns(self):
-        self.voxels = {}
-        self.max_z = 0
-        for column in self.columns.values():
-            if column.height > self.max_z:
-                self.max_z = column.height
-            self.voxels.update(self._column_to_voxels(column))
-        self.root_size = self._next_power_of_two(max(self.grid_w, self.grid_h, self.max_z or 1))
-
-    def _rebuild_octree_nodes(self):
-        self.octree_nodes = {}
-        for record in self.voxels.values():
-            column_height = self.columns.get(record.column).height if record.column in self.columns else record.voxel[2] + 1
-            for key in self._node_keys_for_voxel(record.voxel):
-                node = self.octree_nodes.get(key)
-                if node is None:
-                    node = OctreeNode(key=key)
-                    self.octree_nodes[key] = node
-                if record.hard_occupied:
-                    node.occupied_count += 1
-                if record.soft_occupied:
-                    node.soft_count += 1
-                if record.terrain_penalty > node.max_penalty:
-                    node.max_penalty = record.terrain_penalty
-                if column_height > node.max_height:
-                    node.max_height = column_height
-                if record.class_id is not None:
-                    node.class_counts[record.class_id] = node.class_counts.get(record.class_id, 0) + 1
-
-    def _records_for_cell(self, cell: Cell2D) -> list[VoxelRecord]:
-        return [record for record in self.voxels.values() if record.column == cell]
-
-    def _reconcile_columns_from_voxels(self, cells: set[Cell2D]):
-        for cell in cells:
-            records = self._records_for_cell(cell)
-            if not records:
-                self.columns.pop(cell, None)
-                continue
-
-            height = max(record.voxel[2] for record in records) + 1
-            blocked = any(record.hard_occupied for record in records)
-            traversable = any(record.soft_occupied for record in records) and not blocked
-            terrain_penalty = max((record.terrain_penalty for record in records if record.soft_occupied), default=0.0)
-            class_id = None
-            classified_records = [record for record in records if record.class_id is not None]
-            if classified_records:
-                class_id = max(classified_records, key=lambda record: (record.voxel[2], record.class_id or -1)).class_id
-
-            self.columns[cell] = ColumnState(
-                cell=cell,
-                height=height,
-                class_id=class_id,
-                blocked=blocked,
-                traversable=traversable,
-                terrain_penalty=terrain_penalty,
-            )
+            if column.terrain_penalty > 0.0:
+                self.terrain_penalties[cell] = column.terrain_penalty
+            if column.top_z > self.max_z:
+                self.max_z = column.top_z
 
     def masks_to_obstacle(self, mask_list):
         obstacle_set, target_point = self.grid_handler.batch_masks_to_obs(mask_list or [])
@@ -328,12 +197,12 @@ class OctoMap:
             print("地图构建：未检测到掩码，障碍物集合为空")
             return set(), None
 
-        print(f"地图构建：生成 {len(obstacle_set)} 个栅格障碍物")
+        print(f"地图构建：生成 {len(obstacle_set)} 个局部 2.5D 障碍栅格")
         return set(self.blocked_obstacles), target_point
 
     def build_octomap(self, obstacle_set):
-        print("开始构建八叉树地图...")
-        has_synced_state = bool(self.blocked_obstacles or self.traversable_obstacles or self.obstacle_heights)
+        print("开始构建局部 2.5D 地图...")
+        has_synced_state = bool(self.obstacles or self.obstacle_heights or self.obstacle_class_ids)
         if has_synced_state:
             self._build_columns_from_synced_state()
         else:
@@ -341,54 +210,19 @@ class OctoMap:
             self.mask_instances = []
             self.target_point = None
 
-        self._rebuild_2d_views_from_columns()
         self.revision += 1
-        self._rebuild_voxels_from_columns()
-        self._rebuild_octree_nodes()
-        print("八叉树地图构建完成！")
+        self._rebuild_local_views()
+        print("局部 2.5D 地图构建完成！")
         return set(self.blocked_obstacles)
 
-    def get_bounds(self) -> tuple[int, int, int]:
+    def get_bounds(self) -> tuple[int, int, float]:
         return self.grid_w, self.grid_h, self.max_z
 
     def get_blocked_obstacles_2d(self) -> set[Cell2D]:
         return set(self.blocked_obstacles)
 
-    def get_traversable_obstacles_2d(self) -> set[Cell2D]:
-        return set(self.traversable_obstacles)
-
-    def get_terrain_penalties_2d(self) -> dict[Cell2D, float]:
-        return dict(self.terrain_penalties)
-
     def get_obstacle_heights_2d(self) -> dict[Cell2D, int]:
         return dict(self.obstacle_heights)
-
-    def get_occupied_voxels(self, hard_only: bool = True) -> set[Voxel3D]:
-        if hard_only:
-            return {voxel for voxel, record in self.voxels.items() if record.hard_occupied}
-        return set(self.voxels)
-
-    def get_soft_voxels(self) -> set[Voxel3D]:
-        return {voxel for voxel, record in self.voxels.items() if record.soft_occupied}
-
-    def get_octree_nodes(self, depth: int | None = None) -> dict[OctreeNodeKey, OctreeNode]:
-        if depth is None:
-            return dict(self.octree_nodes)
-        return {key: node for key, node in self.octree_nodes.items() if key[0] == depth}
-
-    def is_occupied(self, voxel: Voxel3D, hard_only: bool = False) -> bool:
-        record = self.voxels.get(voxel)
-        if record is None:
-            return False
-        if hard_only:
-            return record.hard_occupied
-        return record.hard_occupied or record.soft_occupied
-
-    def get_penalty(self, voxel: Voxel3D) -> float:
-        record = self.voxels.get(voxel)
-        if record is None:
-            return 0.0
-        return record.terrain_penalty
 
     def export_planner_snapshot(self) -> dict[str, object]:
         return {
@@ -396,20 +230,15 @@ class OctoMap:
             "grid_scale": self.grid_scale,
             "target_point": self.target_point,
             "blocked_obstacles": self.get_blocked_obstacles_2d(),
-            "traversable_obstacles": self.get_traversable_obstacles_2d(),
-            "terrain_penalties": self.get_terrain_penalties_2d(),
             "obstacle_heights": self.get_obstacle_heights_2d(),
             "obstacle_class_ids": dict(self.obstacle_class_ids),
+            "columns": dict(self.columns),
             "mask_instances": list(self.mask_instances),
-            "occupied_voxels": self.get_occupied_voxels(hard_only=True),
-            "soft_voxels": self.get_soft_voxels(),
-            "root_size": self.root_size,
             "revision": self.revision,
         }
 
-    def show_voxels_3d(
+    def show_local_map_3d(
         self,
-        include_soft: bool = True,
         elev: float = 28.0,
         azim: float = -58.0,
         uav_altitude: float = DEFAULT_UAV_ALTITUDE,
@@ -417,52 +246,41 @@ class OctoMap:
         figure = plt.figure(figsize=(10, 8))
         axis = figure.add_subplot(111, projection="3d")
 
-        hard_columns = sorted((column for column in self.columns.values() if column.blocked), key=lambda column: column.cell)
-        soft_columns = sorted(
-            (column for column in self.columns.values() if column.traversable and not column.blocked),
+        grounded_columns = sorted(
+            (column for column in self.columns.values() if column.mode == "grounded"),
             key=lambda column: column.cell,
-        ) if include_soft else []
+        )
+        canopy_columns = sorted(
+            (column for column in self.columns.values() if column.mode == "canopy"),
+            key=lambda column: column.cell,
+        )
 
-        if hard_columns:
-            xs = [column.cell[0] for column in hard_columns]
-            ys = [column.cell[1] for column in hard_columns]
-            zs = [0.0] * len(hard_columns)
-            dx = [1.0] * len(hard_columns)
-            dy = [1.0] * len(hard_columns)
-            dz = [float(column.height) for column in hard_columns]
-            axis.bar3d(xs, ys, zs, dx, dy, dz, color="#2f2f2f", alpha=0.85, shade=True)
+        if grounded_columns:
+            xs = [column.cell[0] for column in grounded_columns]
+            ys = [column.cell[1] for column in grounded_columns]
+            zs = [column.display_base_z for column in grounded_columns]
+            dx = [1.0] * len(grounded_columns)
+            dy = [1.0] * len(grounded_columns)
+            dz = [column.height for column in grounded_columns]
+            axis.bar3d(xs, ys, zs, dx, dy, dz, color="#4c4c4c", alpha=0.88, shade=True)
 
-        if soft_columns:
-            xs = [column.cell[0] for column in soft_columns]
-            ys = [column.cell[1] for column in soft_columns]
-            zs = [0.0] * len(soft_columns)
-            dx = [1.0] * len(soft_columns)
-            dy = [1.0] * len(soft_columns)
-            dz = [float(column.height) for column in soft_columns]
-            axis.bar3d(xs, ys, zs, dx, dy, dz, color="#2ca02c", alpha=0.35, shade=True)
+        if canopy_columns:
+            xs = [column.cell[0] for column in canopy_columns]
+            ys = [column.cell[1] for column in canopy_columns]
+            zs = [column.collision_base_z for column in canopy_columns]
+            dx = [1.0] * len(canopy_columns)
+            dy = [1.0] * len(canopy_columns)
+            dz = [max(column.top_z - column.collision_base_z, 0.1) for column in canopy_columns]
+            axis.bar3d(xs, ys, zs, dx, dy, dz, color="#2ca02c", alpha=0.55, shade=True)
 
         if self.target_point is not None:
             tx, ty = self.target_point
-            axis.scatter(
-                [tx + 0.5],
-                [ty + 0.5],
-                [0.5],
-                color="red",
-                s=70,
-                depthshade=False,
-            )
+            axis.scatter([tx + 0.5], [ty + 0.5], [0.5], color="red", s=70, depthshade=False)
 
         uav_x = self.grid_w / 2.0
         uav_y = self.grid_h / 2.0
         uav_z = max(0.0, float(uav_altitude))
-        axis.scatter(
-            [uav_x],
-            [uav_y],
-            [uav_z],
-            color="#1f77b4",
-            s=90,
-            depthshade=False,
-        )
+        axis.scatter([uav_x], [uav_y], [uav_z], color="#1f77b4", s=90, depthshade=False)
 
         axis.set_xlim(0, max(self.grid_w, 1))
         axis.set_ylim(0, max(self.grid_h, 1))
@@ -470,17 +288,14 @@ class OctoMap:
         axis.set_xlabel("X")
         axis.set_ylabel("Y")
         axis.set_zlabel("Z")
-        axis.set_title(f"OctoMap Columns | UAV z={uav_z:.1f}")
+        axis.set_title(f"Local 2.5D Map | UAV z={uav_z:.1f}")
         axis.view_init(elev=elev, azim=azim)
 
         legend_items = [
-            Line2D([0], [0], marker="s", color="w", label="hard obstacle", markerfacecolor="#2f2f2f", markersize=10),
+            Line2D([0], [0], marker="s", color="w", label="grounded obstacle", markerfacecolor="#4c4c4c", markersize=10),
+            Line2D([0], [0], marker="s", color="w", label="canopy obstacle", markerfacecolor="#2ca02c", markersize=10),
             Line2D([0], [0], marker="o", color="w", label="uav", markerfacecolor="#1f77b4", markersize=8),
         ]
-        if include_soft:
-            legend_items.append(
-                Line2D([0], [0], marker="s", color="w", label="soft obstacle", markerfacecolor="#2ca02c", markersize=10)
-            )
         if self.target_point is not None:
             legend_items.append(
                 Line2D([0], [0], marker="o", color="w", label="target", markerfacecolor="red", markersize=8)
@@ -489,15 +304,7 @@ class OctoMap:
         plt.tight_layout()
         plt.show()
 
-    def update_columns(
-        self,
-        added_or_changed: Mapping[Cell2D, ColumnState | Mapping[str, Any] | int | None],
-        removed: set[Cell2D] | None = None,
-    ) -> OctoMapDelta:
-        old_voxels = set(self.voxels)
-        old_nodes = self._snapshot_nodes()
-        changed_columns = set(removed or set()) | set(added_or_changed)
-
+    def update_columns(self, added_or_changed: Mapping[Cell2D, ColumnState | Mapping[str, Any] | int | float | None], removed: set[Cell2D] | None = None):
         for cell in removed or set():
             self.columns.pop(cell, None)
 
@@ -508,100 +315,23 @@ class OctoMap:
             else:
                 self.columns[cell] = column
 
-        self._rebuild_2d_views_from_columns()
         self.revision += 1
-        self._rebuild_voxels_from_columns()
-        self._rebuild_octree_nodes()
+        self._rebuild_local_views()
 
-        return OctoMapDelta(
-            added_voxels=set(self.voxels) - old_voxels,
-            removed_voxels=old_voxels - set(self.voxels),
-            changed_columns=changed_columns,
-            changed_nodes=self._changed_node_keys(old_nodes),
-            revision=self.revision,
-        )
-
-    def clear_column(self, cell: Cell2D) -> OctoMapDelta:
-        return self.update_columns({}, removed={cell})
-
-    def update_voxels(
-        self,
-        occupied: set[Voxel3D] | None = None,
-        freed: set[Voxel3D] | None = None,
-        soft: set[Voxel3D] | None = None,
-    ) -> OctoMapDelta:
-        old_voxels = set(self.voxels)
-        old_nodes = self._snapshot_nodes()
-        next_revision = self.revision + 1
-        changed_columns: set[Cell2D] = set()
-
-        for voxel in freed or set():
-            record = self.voxels.pop(voxel, None)
-            if record is not None:
-                changed_columns.add(record.column)
-            else:
-                changed_columns.add((voxel[0], voxel[1]))
-
-        for voxel in occupied or set():
-            cell = (voxel[0], voxel[1])
-            previous = self.voxels.get(voxel)
-            class_id = previous.class_id if previous is not None else self.obstacle_class_ids.get(cell)
-            self.voxels[voxel] = VoxelRecord(
-                voxel=voxel,
-                hard_occupied=True,
-                soft_occupied=False,
-                class_id=class_id,
-                terrain_penalty=0.0,
-                column=cell,
-                revision=next_revision,
-            )
-            changed_columns.add(cell)
-
-        for voxel in soft or set():
-            cell = (voxel[0], voxel[1])
-            previous = self.voxels.get(voxel)
-            if previous is not None and previous.hard_occupied:
-                changed_columns.add(cell)
-                continue
-            class_id = previous.class_id if previous is not None else self.obstacle_class_ids.get(cell)
-            penalty = previous.terrain_penalty if previous is not None else self.terrain_penalties.get(cell, 0.0)
-            self.voxels[voxel] = VoxelRecord(
-                voxel=voxel,
-                hard_occupied=False,
-                soft_occupied=True,
-                class_id=class_id,
-                terrain_penalty=penalty,
-                column=cell,
-                revision=next_revision,
-            )
-            changed_columns.add(cell)
-
-        self._reconcile_columns_from_voxels(changed_columns)
-        self._rebuild_2d_views_from_columns()
-        self.revision = next_revision
-        self.max_z = max((record.voxel[2] for record in self.voxels.values()), default=-1) + 1
-        self.root_size = self._next_power_of_two(max(self.grid_w, self.grid_h, self.max_z or 1))
-        self._rebuild_octree_nodes()
-
-        return OctoMapDelta(
-            added_voxels=set(self.voxels) - old_voxels,
-            removed_voxels=old_voxels - set(self.voxels),
-            changed_columns=changed_columns,
-            changed_nodes=self._changed_node_keys(old_nodes),
-            revision=self.revision,
-        )
+    def clear_column(self, cell: Cell2D):
+        self.update_columns({}, removed={cell})
 
 
 def get_default_mask_dir() -> Path:
-    return DEFAULT_CONFIG.default_mask_dir.resolve()
+    latest_run_dir = get_latest_segmentation_run_dir(DEFAULT_CONFIG.runs_dir / "segment")
+    return (latest_run_dir / "masks").resolve()
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build and display a 3D octomap voxel view from segmentation masks.")
+    parser = argparse.ArgumentParser(description="Build and display a local 2.5D map view from segmentation masks.")
     parser.add_argument("--mask-dir", type=str, default=None, help="Directory containing mask PNG files.")
     parser.add_argument("--grid-scale", type=int, default=DEFAULT_CONFIG.default_grid_scale, help="Pixel-to-grid scale.")
-    parser.add_argument("--hide-soft", action="store_true", help="Hide soft traversable voxels in the 3D view.")
-    parser.add_argument("--uav-altitude", type=float, default=DEFAULT_UAV_ALTITUDE, help="Default UAV altitude in the 3D view.")
+    parser.add_argument("--uav-altitude", type=float, default=DEFAULT_UAV_ALTITUDE, help="Default UAV altitude in the local 2.5D view.")
     parser.add_argument("--elev", type=float, default=28.0, help="3D camera elevation angle.")
     parser.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth angle.")
     return parser.parse_args()
@@ -617,13 +347,10 @@ def main() -> None:
     octomap = OctoMap(grid_w=grid_w, grid_h=grid_h, grid_scale=args.grid_scale)
     mask_list = load_mask_entries(mask_dir, octomap.grid_handler)
     octomap.masks_to_obstacle(mask_list)
-    octomap.show_voxels_3d(
-        include_soft=not args.hide_soft,
-        elev=args.elev,
-        azim=args.azim,
-        uav_altitude=args.uav_altitude,
-    )
+    octomap.show_local_map_3d(elev=args.elev, azim=args.azim, uav_altitude=args.uav_altitude)
 
 
 if __name__ == "__main__":
     main()
+
+# python -m app.mapping.octomap --mask-dir runs/segment/exp2/masks

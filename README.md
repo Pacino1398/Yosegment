@@ -1,5 +1,36 @@
 # Yosegment
 
+## 本次更新摘要
+
+这次主要补的是 **局部 2.5D 建图与展示**，集中在 `app/mapping/octomap.py`：
+
+- `octomap.py` 现在不再按“全局八叉树地图”来理解，当前更适合作为 **局部 2.5D 地图构建与可视化入口**。
+- 默认会优先读取 `runs/segment/` 下最新一轮分割结果的 `masks/`，也可以手动传 `--mask-dir` 覆盖。
+- 输入仍然复用现有分割结果 `masks`，底层继续走 `app.mapping.grid_map` 的 mask → 栅格投影逻辑。
+- 建图规则按类别区分：
+  - `tree / forest`：按树冠 footprint 建图，内部碰撞语义按 **向下膨胀 1 米** 处理，便于后续继续更新。
+  - `house`：按观测 footprint **直接拉到底部**。
+  - 其他已支持障碍类：暂时按普通 grounded 柱体处理。
+- 可视化效果已调整为：
+  - 障碍物统一表现为 **从地面向上生长**；
+  - 无人机显示在局部地图中心上空，默认高度 **15m**；
+  - 展示重点是局部 2.5D 柱状图，不再走之前那种逐 voxel 的慢速显示方式。
+- `octomap.py` 已补充命令行入口，可直接运行：
+
+```bash
+python -m app.mapping.octomap --mask-dir runs/segment/exp2/masks
+```
+
+如果你是在 `app/mapping/` 目录下直接执行脚本，也可以这样运行：
+
+```bash
+python octomap.py --mask-dir D:/qingyu/Yosegment/runs/segment/exp2/masks
+```
+
+注意：当前如果不传 `--mask-dir`，默认仍可能落到 `app/config.py` 里的默认 mask 路径；如果你的分割结果实际在 `runs/segment/exp*/masks`，建议显式传入 `--mask-dir`。
+
+---
+
 一个把 **YOLOv5 分割结果** 转成 **栅格障碍物地图**，再做 **D* Lite 路径规划** 的工程。
 
 现在项目里的本地业务逻辑已经基本收拢到 `app/` 下：
