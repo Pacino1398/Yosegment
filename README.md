@@ -2,20 +2,25 @@
 
 ## 本次更新摘要
 
-这次主要补的是 **局部 2.5D 建图与展示**，集中在 `app/mapping/octomap.py`：
+这次新增/补齐了 **全 3D 路径规划（Phase 1）** 与 **3D 可视化 demo**，并保留原有 **局部 2.5D 建图与展示**。
+
+### A) 局部 2.5D 建图与展示（OctoMap columns）
+
+集中在 `app/mapping/octomap.py`：
 
 - `octomap.py` 现在不再按“全局八叉树地图”来理解，当前更适合作为 **局部 2.5D 地图构建与可视化入口**。
 - 默认会优先读取 `runs/segment/` 下最新一轮分割结果的 `masks/`，也可以手动传 `--mask-dir` 覆盖。
 - 输入仍然复用现有分割结果 `masks`，底层继续走 `app.mapping.grid_map` 的 mask → 栅格投影逻辑。
 - 建图规则按类别区分：
-  - `tree / forest`：按树冠 footprint 建图，内部碰撞语义按 **向下膨胀 1 米** 处理，便于后续继续更新。
+  - `tree / forest`：按树冠 footprint 建图，内部碰撞语义按 **向下膨胀 1 米** 处理。
   - `house`：按观测 footprint **直接拉到底部**。
   - 其他已支持障碍类：暂时按普通 grounded 柱体处理。
-- 可视化效果已调整为：
+- 可视化效果：
   - 障碍物统一表现为 **从地面向上生长**；
   - 无人机显示在局部地图中心上空，默认高度 **15m**；
   - 展示重点是局部 2.5D 柱状图，不再走之前那种逐 voxel 的慢速显示方式。
-- `octomap.py` 已补充命令行入口，可直接运行：
+
+命令行入口：
 
 ```bash
 python -m app.mapping.octomap --mask-dir runs/segment/exp2/masks
@@ -27,7 +32,48 @@ python -m app.mapping.octomap --mask-dir runs/segment/exp2/masks
 python octomap.py --mask-dir D:/qingyu/Yosegment/runs/segment/exp2/masks
 ```
 
-注意：当前如果不传 `--mask-dir`，默认仍可能落到 `app/config.py` 里的默认 mask 路径；如果你的分割结果实际在 `runs/segment/exp*/masks`，建议显式传入 `--mask-dir`。
+### B) 全 3D 路径规划（D* Lite 3D + 26 邻域）
+
+新增文件/模块（位于 `app/planning/`）：
+
+- `dstar_lite_3d.py`：3D D* Lite（state=(x,y,z)、26 邻域、3D Euclidean heuristic、3D step cost、3D update_vertex）
+- `octomap_voxel_adapter.py`：将当前 OctoMap 的“2.5D 柱体”（column/top_z/collision_base_z）适配为可查询的 `VoxelOccupancy`（支持 is_occupied((x,y,z))）
+
+关键约定：
+
+- 体素 z 区间语义为 **[z_lo, z_hi)**（半开区间），避免 `top_z` 为整数时出现边界层误判占用。
+- 3D demo 默认使用 `ManualHeightProvider(default_z=15)` 给 start/goal 提供 z（可用 `--z0` 覆盖）。
+
+### C) 3D 可视化 demo（matplotlib mplot3d）
+
+新增 demo：
+
+- `app/planning/pathplan_3d_demo.py`：从 runs/segment 最新 masks 构建 OctoMap → VoxelOccupancy → DStarLite3D，并可用 mplot3d 可视化 “占用体素 + 3D 路径”。
+
+运行示例：
+
+```bash
+# 仅计算并打印路径（不弹窗）
+python -m app.planning.pathplan_3d_demo
+
+# 计算 + 3D 可视化（推荐）
+python -m app.planning.pathplan_3d_demo --viz
+
+# 渲染加速（occupied 点过多时）
+python -m app.planning.pathplan_3d_demo --viz --viz-skip 2 --viz-max-voxels 30000 --viz-alpha 0.06
+
+# 手动指定 masks 目录
+python -m app.planning.pathplan_3d_demo --mask-dir runs/segment/exp/masks --viz
+```
+
+验证命令：
+
+```bash
+python -m pytest -q
+python -m pytest -q tests/test_planner_3d.py
+```
+
+注意：当前 demo 的 3D 可视化为了“最小可用”，会对 voxel 空间做 brute-force 扫描采样，因此提供 `viz-*` 参数控制绘制体素数量；后续如要上板（RK3588）长期运行，建议改为直接从 column 生成点集（避免 O(W*H*Z) 扫描）。
 
 ---
 
