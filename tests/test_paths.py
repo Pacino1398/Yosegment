@@ -28,7 +28,8 @@ def test_build_predict_command_uses_explicit_arguments(tmp_path):
     )
 
     assert command[0] == sys.executable
-    assert command[1].endswith("yolo/segment/predict.py")
+    # Windows 下 command[1] 可能包含反斜杠路径分隔符，统一用 Path 归一化后再断言末尾路径
+    assert Path(command[1]).as_posix().endswith("yolo/segment/predict.py")
     assert command[command.index("--weights") + 1] == str(weights.resolve())
     assert command[command.index("--data") + 1] == str(data_yaml.resolve())
     assert command[command.index("--source") + 1] == str(source.resolve())
