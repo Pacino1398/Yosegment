@@ -161,25 +161,54 @@ def _sample_occupied_voxels(
     occupancy: VoxelOccupancy,
     max_voxels: int,
     skip: int,
+    surface_only: bool,
 ) -> tuple[list[int], list[int], list[int]]:
+    """
+    采样占用体素点云。
+
+    surface_only=True 时只采样“外表面”体素，避免把障碍物内部全部画出来导致过于密集：
+    - 若当前 occupied voxel 的 6-邻域（面邻域）里存在 free/out-of-bounds，则认为它在表面上
+    """
     grid = occupancy.grid
     xs: list[int] = []
     ys: list[int] = []
     zs: list[int] = []
     sampled = 0
 
+    neighbors6 = (
+        (1, 0, 0),
+        (-1, 0, 0),
+        (0, 1, 0),
+        (0, -1, 0),
+        (0, 0, 1),
+        (0, 0, -1),
+    )
+
     for x in range(grid.x_max):
         for y in range(grid.y_max):
             for z in range(grid.z_max):
                 if skip > 1 and ((x + y + z) % skip != 0):
                     continue
-                if occupancy.is_occupied((x, y, z)):
-                    xs.append(x)
-                    ys.append(y)
-                    zs.append(z)
-                    sampled += 1
-                    if sampled >= max_voxels:
-                        return xs, ys, zs
+                if not occupancy.is_occupied((x, y, z)):
+                    continue
+
+                if surface_only:
+                    is_surface = False
+                    for dx, dy, dz in neighbors6:
+                        nb = (x + dx, y + dy, z + dz)
+                        if (not grid.in_bounds(nb)) or (not occupancy.is_occupied(nb)):
+                            is_surface = True
+                            break
+                    if not is_surface:
+                        continue
+
+                xs.append(x)
+                ys.append(y)
+                zs.append(z)
+                sampled += 1
+                if sampled >= max_voxels:
+                    return xs, ys, zs
+
     return xs, ys, zs
 
 
@@ -188,6 +217,8 @@ def _visualize_3d(
     max_voxels: int,
     skip: int,
     alpha: float,
+    point_size: float,
+    surface_only: bool,
 ) -> None:
     import matplotlib.pyplot as plt
 
@@ -195,6 +226,7 @@ def _visualize_3d(
         occupancy,
         max_voxels=int(max_voxels),
         skip=max(1, int(skip)),
+        surface_only=bool(surface_only),
     )
 
     fig = plt.figure(figsize=(10, 7))
@@ -202,7 +234,16 @@ def _visualize_3d(
     ax.set_title("3D Map Convert (occupied voxels)")
 
     if xs:
-        ax.scatter(xs, ys, zs, s=2, c="k", alpha=float(alpha), depthshade=False, label="occupied")
+        ax.scatter(
+            xs,
+            ys,
+            zs,
+            s=float(point_size),
+            c="k",
+            alpha=float(alpha),
+            depthshade=False,
+            label="occupied",
+        )
 
     grid = occupancy.grid
     ax.set_xlabel("x")
@@ -251,9 +292,24 @@ def _parse_args():
         help="Disable visualization.",
     )
 
-    p.add_argument("--viz-max-voxels", type=int, default=60000, help="Hard cap of drawn occupied voxels.")
-    p.add_argument("--viz-skip", type=int, default=2, help="Draw every N-th voxel (1=all). Increase to speed up rendering.")
-    p.add_argument("--viz-alpha", type=float, default=0.10, help="Voxel point alpha (transparency).")
+    # 体素块形态
+    p.add_argument("--viz-max-voxels", type=int, default=1000000, help="Hard cap of drawn occupied voxels.")
+    p.add_argument("--viz-skip", type=int, default=1, help="Draw every N-th voxel.")
+    p.add_argument("--viz-alpha", type=float, default=1.0, help="Voxel point alpha.")
+    p.add_argument("--viz-point-size", type=float, default=2.0, help="Voxel point size for scatter.")
+    p.add_argument(
+        "--viz-surface-only",
+        action="store_true",
+        default=True,
+        help="Draw only surface voxels."
+    )
+
+    p.add_argument(
+        "--viz-solid",
+        dest="viz_surface_only",
+        action="store_false",
+        help="Draw solid voxels."
+    )
     return p.parse_args()
 
 
@@ -270,7 +326,7 @@ def main() -> None:
     from app.mapping.grid_map import GridMapHandler, load_mask_entries
     from app.mapping.octomap import OctoMap
     from app.paths import resolve_path
-    from app.planning.octomap_voxel_adapter import OctoMapVoxelAdapter
+    from app.mapping.octomap_voxel_adapter import OctoMapVoxelAdapter
 
     args = _parse_args()
     mask_dir = resolve_path(args.mask_dir, _get_default_mask_dir())
@@ -300,12 +356,14 @@ def main() -> None:
             max_voxels=int(args.viz_max_voxels),
             skip=int(args.viz_skip),
             alpha=float(args.viz_alpha),
+            point_size=float(args.viz_point_size),
+            surface_only=bool(args.viz_surface_only),
         )
 
 
 if __name__ == "__main__":
-    # 既支持 `python -m app.planning.space3d`（包模式）
-    # 也支持直接 `python app/planning/space3d.py`（脚本模式）
+    # 既支持 `python -m app.planning.space3d`
+    # 也支持直接 `python app/planning/space3d.py`
     import sys
     from pathlib import Path
 

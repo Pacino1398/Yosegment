@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from app.mapping.octomap import ColumnState
 from app.planning.dstar_lite_3d import DStarLite3D
-from app.planning.octomap_voxel_adapter import OctoMapVoxelAdapter
+from app.mapping.octomap_voxel_adapter import OctoMapVoxelAdapter
 from app.planning.space3d import GridSpec3D, ManualHeightProvider, VoxelOccupancy
 
 
