@@ -52,8 +52,12 @@ class DStarLite3D:
     motions: tuple[tuple[int, int, int], ...] | None = None
 
     def __post_init__(self):
+        # start 的 z：由 HeightSource/HeightProvider 决定（比如巡航高度、离地高度等策略）
         self.start = (self.start_xy[0], self.start_xy[1], int(self.height_source.get_z(self.start_xy)))
-        self.goal = (self.goal_xy[0], self.goal_xy[1], int(self.height_source.get_z(self.goal_xy)))
+
+        # goal 的 z：当前工程约定“投递点在地面”，因此强制 goal_z=0
+        # 若未来需要“空中目标点”，可再引入 GoalHeightSource 或参数开关。
+        self.goal = (self.goal_xy[0], self.goal_xy[1], 0)
 
         # 核心状态（惰性初始化：未出现节点默认 inf）
         self.g = {}
@@ -197,7 +201,8 @@ class DStarLite3D:
 
     def update_goal(self, new_goal_xy: Cell2D) -> None:
         # Phase 1：简单重建
-        new_goal = (new_goal_xy[0], new_goal_xy[1], int(self.height_source.get_z(new_goal_xy)))
+        # 目标点强制落地：goal_z=0
+        new_goal = (new_goal_xy[0], new_goal_xy[1], 0)
         self.goal = new_goal
         self.g.clear()
         self.rhs.clear()

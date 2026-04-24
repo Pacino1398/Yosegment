@@ -1,8 +1,6 @@
-# Yosegment
+# Yosegmentne
 
-## 本次更新摘要
-
-这次新增/补齐了 **全 3D 路径规划（Phase 1）** 与 **3D 可视化 demo**，并保留原有 **局部 2.5D 建图与展示**。
+补齐了 **全 3D 路径规划（Phase 1）** 与 **3D 可视化 demo**，并保留原有 **局部 2.5D 建图与展示**。
 
 ### A) 局部 2.5D 建图与展示（OctoMap columns）
 
@@ -352,14 +350,6 @@ runs/pathplan/exp2
 - `planned.png`
 
 不再额外复制 `masks`。
-
-## 4.3 为什么会有 `exp`、`exp1`、`exp2`
-
-当前命名规则是：
-- 第一次输出：`exp`
-- 后续依次：`exp1`、`exp2`、`exp3`
-
-所以不是少了 `exp1`，而是第一轮本来就叫 `exp`。
 
 ---
 

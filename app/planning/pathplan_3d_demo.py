@@ -68,7 +68,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _visualize_3d(occupancy: OctoMapVoxelAdapter, path3d: list[tuple[int, int, int]], max_voxels: int, skip: int, alpha: float) -> None:
+def _visualize_3d(
+    occupancy: OctoMapVoxelAdapter,
+    path3d: list[tuple[int, int, int]],
+    start: tuple[int, int, int] | None,
+    goal: tuple[int, int, int] | None,
+    max_voxels: int,
+    skip: int,
+    alpha: float,
+) -> None:
     grid = occupancy.grid
     xs: list[int] = []
     ys: list[int] = []
@@ -103,8 +111,12 @@ def _visualize_3d(occupancy: OctoMapVoxelAdapter, path3d: list[tuple[int, int, i
     if path3d:
         p = np.asarray(path3d, dtype=np.int32)
         ax.plot(p[:, 0], p[:, 1], p[:, 2], c="#00FF00", linewidth=2.5, label="path")
-        ax.scatter([p[0, 0]], [p[0, 1]], [p[0, 2]], c="blue", s=40, label="start")
-        ax.scatter([p[-1, 0]], [p[-1, 1]], [p[-1, 2]], c="red", s=40, label="goal")
+
+    # 颜色约定：起点=绿色，目标点=红色
+    if start is not None:
+        ax.scatter([start[0]], [start[1]], [start[2]], c="#00FF00", s=60, label="start")
+    if goal is not None:
+        ax.scatter([goal[0]], [goal[1]], [goal[2]], c="red", s=60, label="goal")
 
     ax.set_xlabel("x")
     ax.set_ylabel("y")
@@ -148,14 +160,37 @@ def main() -> None:
     z_max_cap = None if args.z_max_cap <= 0 else int(args.z_max_cap)
     occupancy = OctoMapVoxelAdapter(octomap, z_resolution=1.0, z_max_cap=z_max_cap)
 
-    # 4) 3D D* Lite
-    start_xy = (grid_w // 2, grid_h // 2)
-    goal_xy = target_point if target_point is not None else (max(0, grid_w - 5), max(0, grid_h - 5))
+# 4) 3D D* Lite
+    raw_start_x, raw_start_y = grid_w // 2, grid_h // 2
+    if target_point is not None:
+        raw_goal_x, raw_goal_y = target_point[0], target_point[1]
+    else:
+        raw_goal_x, raw_goal_y = grid_w - 5, grid_h - 5
+
+    start_xy = (
+        min(max(0, int(raw_start_x)), grid_w - 1),
+        min(max(0, int(raw_start_y)), grid_h - 1)
+    )
+    goal_xy = (
+        min(max(0, int(raw_goal_x)), grid_w - 1),
+        min(max(0, int(raw_goal_y)), grid_h - 1)
+    )
+
     height_source = ManualHeightProvider(default_z=int(args.z0))
+    planner = DStarLite3D(
+        start_xy=start_xy, 
+        goal_xy=goal_xy, 
+        occupancy=occupancy, 
+        height_source=height_source
+    )
 
-    planner = DStarLite3D(start_xy=start_xy, goal_xy=goal_xy, occupancy=occupancy, height_source=height_source)
+    print("-" * 50)
+    print(f"[DEBUG] Grid: {grid_w}x{grid_h} | Z0 Layer: {height_source.get_z(start_xy)}")
+    print(f"[DEBUG] Final Start: {planner.start} | Occupied: {occupancy.is_occupied(planner.start)}")
+    print(f"[DEBUG] Final Goal:  {planner.goal} | Occupied: {occupancy.is_occupied(planner.goal)}")
+    print("-" * 50)
+
     path3d = planner.plan(max_steps=int(args.max_steps))
-
     print(f"grid: {grid_w}x{grid_h} z_max={occupancy.grid.z_max}")
     print(f"start: {planner.start} goal: {planner.goal}")
     print(f"path length: {len(path3d)}")
@@ -167,6 +202,8 @@ def main() -> None:
         _visualize_3d(
             occupancy,
             path3d,
+            start=planner.start,
+            goal=planner.goal,
             max_voxels=int(args.viz_max_voxels),
             skip=max(1, int(args.viz_skip)),
             alpha=float(args.viz_alpha),
