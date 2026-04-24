@@ -19,7 +19,7 @@ from app.paths import resolve_path
 from app.planning.pathplan_batch import get_latest_segmentation_run_dir
 
 Cell2D = tuple[int, int]
-DEFAULT_UAV_ALTITUDE = 15.0
+DEFAULT_UAV_ALTITUDE = 12.0
 TREE_CANOPY_DOWNWARD_EXPANSION = 1.0
 CANOPY_CLASSES = {4, 6}
 GROUNDED_CLASSES = {1, 3, 5, 9}
