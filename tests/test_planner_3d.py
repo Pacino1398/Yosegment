@@ -78,4 +78,6 @@ def test_dstar_lite_3d_simple_plan_reaches_goal():
     path = planner.plan(max_steps=500)
     assert path
     assert path[0] == (0, 0, 2)
-    assert path[-1] == (5, 5, 2)
+
+    # 目标点约定落地：goal_z=0
+    assert path[-1] == (5, 5, 0)

@@ -85,10 +85,18 @@ class HeightSource(Protocol):
     - D* Lite 3D 在生成 start/goal 的 (x, y, z) 时，通过该接口获取 z。
     """
 
-    def get_z(self, cell_xy: Cell2D) -> int:
-        """返回离散高度层 z（整数层索引）。"""
-        ...
-
+    # def get_z(self, cell_xy: Cell2D) -> int:
+    def get_z(self, cell_xy: Cell2D, occupancy: VoxelOccupancy) -> int:
+        """
+        全局安全高度：飞在整张地图所有障碍物的顶端。
+        """
+        # 获取整张地图中所有列的最大高度
+        max_terrain_z = occupancy.octomap.max_z if hasattr(occupancy, 'octomap') else 5
+        
+        # 飞在最高点 + 1 的位置
+        safe_z = max_terrain_z + 1
+        
+        return min(safe_z, occupancy.grid.z_max - 1)
 
 @dataclass(frozen=True, slots=True)
 class ManualHeightProvider:
