@@ -15,6 +15,7 @@ D* Lite 3D (Phase 1)
 - Phase 2 将替换为 heapq 优先队列
 """
 
+import heapq
 import math
 from dataclasses import dataclass
 
@@ -47,9 +48,46 @@ class DStarLite3D:
     goal: Cell3D | None = None
     g: dict[Cell3D, float] | None = None
     rhs: dict[Cell3D, float] | None = None
-    U: dict[Cell3D, tuple[float, float]] | None = None
+
+    # open list: heapq + lazy deletion
+    _open_heap: list[tuple[float, float, int, Cell3D]] | None = None
+    _open_entries: dict[Cell3D, tuple[float, float, int]] | None = None
+    _open_seq: int = 0
+
     km: float = 0.0
     motions: tuple[tuple[int, int, int], ...] | None = None
+
+    def _open_insert_or_update(self, s: Cell3D) -> None:
+        """插入/更新 open list 中 s 的 key（惰性删除：旧条目留在 heap 里）。"""
+        if self._open_heap is None or self._open_entries is None:
+            raise RuntimeError("open list not initialized")
+        k1, k2 = self.calc_key(s)
+        self._open_seq += 1
+        seq = int(self._open_seq)
+        self._open_entries[s] = (k1, k2, seq)
+        heapq.heappush(self._open_heap, (k1, k2, seq, s))
+
+    def _open_remove(self, s: Cell3D) -> None:
+        if self._open_entries is None:
+            raise RuntimeError("open list not initialized")
+        self._open_entries.pop(s, None)
+
+    def _open_top(self) -> tuple[tuple[float, float], Cell3D] | None:
+        """返回当前最小 key 的 (key, state)，会清理 heap 顶部的过期条目。"""
+        if self._open_heap is None or self._open_entries is None:
+            raise RuntimeError("open list not initialized")
+
+        while self._open_heap:
+            k1, k2, seq, s = self._open_heap[0]
+            cur = self._open_entries.get(s)
+            if cur is None:
+                heapq.heappop(self._open_heap)
+                continue
+            if cur != (k1, k2, seq):
+                heapq.heappop(self._open_heap)
+                continue
+            return (k1, k2), s
+        return None
 
     def __post_init__(self):
         # start 的 z：由 HeightSource/HeightProvider 决定（比如巡航高度、离地高度等策略）
@@ -62,12 +100,17 @@ class DStarLite3D:
         # 核心状态（惰性初始化：未出现节点默认 inf）
         self.g = {}
         self.rhs = {}
-        self.U = {}
+
+        # open list (heapq)
+        self._open_heap = []
+        self._open_entries = {}
+        self._open_seq = 0
+
         self.km = 0.0
 
-        # 初始化 rhs(goal)=0，并插入 U
+        # 初始化 rhs(goal)=0，并插入 open list
         self.rhs[self.goal] = 0.0
-        self.U[self.goal] = self.calc_key(self.goal)
+        self._open_insert_or_update(self.goal)
 
         motions = []
         for dx in (-1, 0, 1):
@@ -86,10 +129,12 @@ class DStarLite3D:
         return float(self.rhs.get(s, float("inf")))
 
     def heuristic(self, a: Cell3D, b: Cell3D) -> float:
-        # 欧氏距离启发式（离散层单位）
-        dx = a[0] - b[0]
-        dy = a[1] - b[1]
-        dz = a[2] - b[2]
+        # 欧氏距离启发式（尺度化：xy_resolution / z_resolution）
+        ax, ay, az = self.occupancy.grid.to_metric(a)
+        bx, by, bz = self.occupancy.grid.to_metric(b)
+        dx = ax - bx
+        dy = ay - by
+        dz = az - bz
         return math.sqrt(float(dx * dx + dy * dy + dz * dz))
 
     def calc_key(self, s: Cell3D) -> tuple[float, float]:
@@ -113,12 +158,14 @@ class DStarLite3D:
         if self.occupancy.is_occupied(a) or self.occupancy.is_occupied(b):
             return float("inf")
 
-        dx = b[0] - a[0]
-        dy = b[1] - a[1]
-        dz = b[2] - a[2]
-        base = _step_cost(dx, dy, dz)
+        ax, ay, az = self.occupancy.grid.to_metric(a)
+        bx, by, bz = self.occupancy.grid.to_metric(b)
+        dx = bx - ax
+        dy = by - ay
+        dz = bz - az
+        base = math.sqrt(float(dx * dx + dy * dy + dz * dz))
 
-        # Phase 1：penalty 由 occupancy 适配器提供（通常按 (x,y) 投影）
+        # penalty 仍由 occupancy 提供（Phase 1 通常按 (x,y) 投影；后续可升级为随 z 变化）
         return base + float(self.occupancy.penalty(b))
 
     # ---------- D* Lite core ----------
@@ -134,29 +181,30 @@ class DStarLite3D:
                     best = val
             self.rhs[u] = best
 
-        if u in self.U:
-            del self.U[u]
+        # 等价于 2D 版的：若 u 在 open list，先移除，再视需要插入
+        self._open_remove(u)
 
         if self._g(u) != self._rhs(u):
-            self.U[u] = self.calc_key(u)
+            self._open_insert_or_update(u)
 
     def compute_path(self) -> None:
         while True:
-            if not self.U:
+            top = self._open_top()
+            if top is None:
                 break
-
-            s = min(self.U, key=self.U.get)
-            k_old = self.U[s]
+            k_old, s = top
             k_new = self.calc_key(s)
 
-            # 终止条件与 2D 版本保持一致
-            if k_old >= k_new and self._rhs(s) == self._g(s):
+            # 终止条件：k_old >= key(start) 且 start 一致
+            if k_old >= self.calc_key(self.start) and self._rhs(self.start) == self._g(self.start):
                 break
 
-            del self.U[s]
+            # pop current valid top
+            self._open_remove(s)
+            heapq.heappop(self._open_heap)
 
             if k_old < k_new:
-                self.U[s] = k_new
+                self._open_insert_or_update(s)
                 continue
 
             if self._g(s) > self._rhs(s):
@@ -196,8 +244,28 @@ class DStarLite3D:
 
     def update_start(self, new_start_xy: Cell2D) -> None:
         new_start = (new_start_xy[0], new_start_xy[1], int(self.height_source.get_z(new_start_xy)))
+        # D* Lite：起点移动时只更新 km 与 start，不需要清空 g/rhs/open list
         self.km += self.heuristic(self.start, new_start)
         self.start = new_start
+
+    def update_occupancy_changed(self, changed_cells: set[Cell3D]) -> None:
+        """实时更新入口：当 occupancy（障碍/代价）发生变化时，增量更新相关顶点。
+
+        约定：
+        - changed_cells 是占用状态或 penalty 发生变化的体素集合
+        - D* Lite 标准做法：对每条受影响的边 (u,v)，调用 update_vertex(u)
+          这里简化为：对 changed cell 及其 26 邻域都 update_vertex。
+        """
+        if not changed_cells:
+            return
+        to_update: set[Cell3D] = set()
+        for c in changed_cells:
+            to_update.add(c)
+            for nb in self.neighbors(c):
+                to_update.add(nb)
+
+        for u in to_update:
+            self.update_vertex(u)
 
     def update_goal(self, new_goal_xy: Cell2D) -> None:
         # Phase 1：简单重建
@@ -206,7 +274,9 @@ class DStarLite3D:
         self.goal = new_goal
         self.g.clear()
         self.rhs.clear()
-        self.U.clear()
+        self._open_heap.clear()
+        self._open_entries.clear()
+        self._open_seq = 0
         self.km = 0.0
         self.rhs[self.goal] = 0.0
-        self.U[self.goal] = self.calc_key(self.goal)
+        self._open_insert_or_update(self.goal)
