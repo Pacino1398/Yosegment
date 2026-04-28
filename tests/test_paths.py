@@ -3,7 +3,7 @@ from pathlib import Path
 
 from app.inference.segmentation import build_predict_command
 from app.paths import get_default_mask_dir, resolve_path
-from app.planning.pathplan_batch import (
+from app.planning.pathplanbatch import (
     create_pathplan_run_dir,
     get_frame_stem,
     get_latest_segmentation_run_dir,

@@ -23,7 +23,7 @@ from app.mapping.grid_map import (
     load_mask_entries,
 )
 from app.planning.dstar_lite import DStarLite
-from app.planning.pathplan_batch import (
+from app.planning.pathplanbatch import (
     INFO_PANEL_EDGE_COLOR,
     PLANNER_GOAL_COLOR,
     PLANNER_GRID_COLOR,

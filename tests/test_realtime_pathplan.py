@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from app.inference.onnx_realtime import detections_to_mask_entries, ensure_onnx_weights_path
-from app.planning.pathplan_batch import build_plan_result, render_plan_view
+from app.planning.pathplanbatch import build_plan_result, render_plan_view
 
 
 def test_ensure_onnx_weights_path_rejects_non_onnx():
