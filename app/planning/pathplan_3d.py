@@ -14,17 +14,23 @@ from __future__ import annotations
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+# 允许 VSCode 直接运行本文件（不要求 python -m）
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from app.config import DEFAULT_CONFIG
 from app.mapping.grid_map import GridMapHandler, load_mask_entries
 from app.mapping.octomap import OctoMap
 from app.paths import resolve_path
 from app.planning.dstar_lite_3d import DStarLite3D
-from app.planning.octomap_voxel_adapter import OctoMapVoxelAdapter
+from app.mapping.octomap_voxel_adapter import OctoMapVoxelAdapter
 from app.planning.space3d import ManualHeightProvider
 from app.planning.pathplan_batch import get_latest_segmentation_run_dir
 from app.planning.space3d import GridSpec3D
@@ -113,7 +119,6 @@ def _visualize_3d(
         p = np.asarray(path3d, dtype=np.int32)
         ax.plot(p[:, 0], p[:, 1], p[:, 2], c="#06E706", linewidth=2.5, label="path")
 
-    # 颜色约定：起点=绿色，目标点=红色
     if start is not None:
         ax.scatter([start[0]], [start[1]], [start[2]], c="#015E01", s=60, label="start")
     if goal is not None:
