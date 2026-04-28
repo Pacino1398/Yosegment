@@ -269,7 +269,7 @@ python -m app.planning.path_planner
 手动指定 mask 目录：
 
 ```bash
-python -m app.planning.path_planner --mask-dir runs/segment/exp/masks
+python -m app.planning.path_planner --mask-dir runs/segment/exp2/masks
 ```
 
 这个入口适合：

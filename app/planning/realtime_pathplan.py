@@ -16,7 +16,7 @@ from app.config import DEFAULT_CONFIG
 from app.inference.onnx_realtime import OnnxRealtimeSegmenter, get_default_data_yaml, get_default_onnx_weights
 from app.inference.segmentation import get_default_source_dir
 from app.paths import resolve_path
-from app.planning.pathplan_batch import (
+from app.planning.pathplanbatch import (
     build_plan_result,
     create_pathplan_run_dir,
     get_default_pathplan_project_dir,

@@ -8,7 +8,7 @@ from app.mapping.grid_map import (
     load_label_confidences,
     parse_mask_filename,
 )
-from app.planning.pathplan_batch import select_display_instances
+from app.planning.pathplanbatch import select_display_instances
 
 
 def test_batch_masks_to_obs_extracts_obstacles_and_target():
