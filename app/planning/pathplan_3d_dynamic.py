@@ -28,7 +28,7 @@ from app.mapping.octomap import OctoMap
 from app.paths import resolve_path
 from app.planning.dstar_lite_3d import DStarLite3D
 from app.mapping.octomap_voxel_adapter import OctoMapVoxelAdapter
-from app.planning.pathplan_batch import get_latest_segmentation_run_dir
+from app.planning.pathplanbatch import get_latest_segmentation_run_dir
 # 提前引入，避免在交互事件中反复触发模块检索
 from app.planning.space3d import ManualHeightProvider
 

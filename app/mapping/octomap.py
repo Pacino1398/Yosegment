@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.lines import Line2D
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,7 +17,7 @@ if str(ROOT) not in sys.path:
 from app.config import DEFAULT_CONFIG
 from app.mapping.grid_map import GridMapHandler, load_mask_entries
 from app.paths import resolve_path
-from app.planning.pathplan_batch import get_latest_segmentation_run_dir
+from app.planning.pathplanbatch import get_latest_segmentation_run_dir
 
 Cell2D = tuple[int, int]
 DEFAULT_UAV_ALTITUDE = 12.0
@@ -242,7 +243,29 @@ class OctoMap:
         elev: float = 28.0,
         azim: float = -58.0,
         uav_altitude: float = DEFAULT_UAV_ALTITUDE,
+        *,
+        edge_only: bool = True,
+        edge_mode: str = "4n",
+        edge_stride: int = 1,
+        edge_max_bars: int | None = None,
+        top_cloth: bool = False,
+        top_cloth_stride: int = 2,
+        top_cloth_alpha: float = 0.18,
     ):
+        """Display local 2.5D pillar map.
+
+        Notes
+        -----
+        - `edge_only=True` will render only boundary columns to speed up matplotlib 3D.
+        - `edge_mode`:
+            - "4n": 4-neighborhood boundary (recommended)
+            - "8n": 8-neighborhood boundary (more aggressive removal of interior columns)
+        - `edge_stride`: keep 1 column for every `edge_stride` cells along X/Y to further thin boundary bars.
+        - `edge_max_bars`: hard cap for rendered bars (applied after boundary + stride).
+        - `top_cloth`: if True, render a lightweight "height-field top cloth" for grounded obstacles via `plot_surface`.
+        - `top_cloth_stride`: downsample stride for the height field grid.
+        - `top_cloth_alpha`: alpha for the cloth surface.
+        """
         figure = plt.figure(figsize=(10, 8))
         axis = figure.add_subplot(111, projection="3d")
 
@@ -255,6 +278,62 @@ class OctoMap:
             key=lambda column: column.cell,
         )
 
+        def _filter_boundary(columns: list[ColumnState]) -> list[ColumnState]:
+            if not columns:
+                return []
+
+            occ = {c.cell for c in columns}
+            if edge_mode == "8n":
+                nbs = (
+                    (1, 0),
+                    (-1, 0),
+                    (0, 1),
+                    (0, -1),
+                    (1, 1),
+                    (1, -1),
+                    (-1, 1),
+                    (-1, -1),
+                )
+            else:
+                nbs = ((1, 0), (-1, 0), (0, 1), (0, -1))
+
+            out: list[ColumnState] = []
+            for c in columns:
+                x, y = c.cell
+                is_edge = False
+                for dx, dy in nbs:
+                    nb = (x + dx, y + dy)
+                    if nb not in occ:
+                        is_edge = True
+                        break
+                if is_edge:
+                    out.append(c)
+            return out
+
+        def _stride_filter(columns: list[ColumnState]) -> list[ColumnState]:
+            if not columns:
+                return []
+            stride = max(1, int(edge_stride))
+            if stride == 1:
+                return columns
+            return [c for c in columns if (c.cell[0] % stride == 0 and c.cell[1] % stride == 0)]
+
+        def _cap(columns: list[ColumnState]) -> list[ColumnState]:
+            if not columns:
+                return []
+            if edge_max_bars is None:
+                return columns
+            cap = int(edge_max_bars)
+            if cap <= 0 or len(columns) <= cap:
+                return columns
+            # deterministic thinning: keep evenly-spaced samples from sorted columns
+            step = max(1, len(columns) // cap)
+            return columns[::step][:cap]
+
+        if edge_only:
+            grounded_columns = _cap(_stride_filter(_filter_boundary(grounded_columns)))
+            canopy_columns = _cap(_stride_filter(_filter_boundary(canopy_columns)))
+
         if grounded_columns:
             xs = [column.cell[0] for column in grounded_columns]
             ys = [column.cell[1] for column in grounded_columns]
@@ -263,6 +342,39 @@ class OctoMap:
             dy = [1.0] * len(grounded_columns)
             dz = [column.height for column in grounded_columns]
             axis.bar3d(xs, ys, zs, dx, dy, dz, color="#4c4c4c", alpha=0.88, shade=True)
+
+        if top_cloth:
+            # Height-field "top cloth" for grounded obstacles.
+            # Build a grid Z(x,y)=top_z for grounded columns (0 where empty), then plot a downsampled surface.
+            stride = max(1, int(top_cloth_stride))
+            Z = np.zeros((self.grid_h, self.grid_w), dtype=np.float32)
+            for column in (c for c in self.columns.values() if c.mode == "grounded"):
+                x, y = column.cell
+                if 0 <= x < self.grid_w and 0 <= y < self.grid_h:
+                    if column.top_z > Z[y, x]:
+                        Z[y, x] = float(column.top_z)
+
+            if stride > 1:
+                Zs = Z[::stride, ::stride]
+                ys = np.arange(0, self.grid_h, stride, dtype=np.float32)
+                xs = np.arange(0, self.grid_w, stride, dtype=np.float32)
+            else:
+                Zs = Z
+                ys = np.arange(0, self.grid_h, 1, dtype=np.float32)
+                xs = np.arange(0, self.grid_w, 1, dtype=np.float32)
+
+            if Zs.size > 0 and float(Zs.max()) > 0.0:
+                X, Y = np.meshgrid(xs, ys)
+                axis.plot_surface(
+                    X,
+                    Y,
+                    Zs,
+                    color="#4c4c4c",
+                    alpha=float(top_cloth_alpha),
+                    linewidth=0,
+                    antialiased=False,
+                    shade=False,
+                )
 
         if canopy_columns:
             xs = [column.cell[0] for column in canopy_columns]
