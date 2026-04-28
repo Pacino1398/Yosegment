@@ -32,37 +32,111 @@ python octomap.py --mask-dir D:/qingyu/Yosegment/runs/segment/exp2/masks
 
 ### B) 全 3D 路径规划（D* Lite 3D + 26 邻域）
 
-新增文件/模块（位于 `app/planning/`）：
+这一部分是当前工程从“局部 2.5D 柱状障碍物表达”平滑迈向“全 3D 体素规划”的关键。
 
-- `dstar_lite_3d.py`：3D D* Lite（state=(x,y,z)、26 邻域、3D Euclidean heuristic、3D step cost、3D update_vertex）
-- `octomap_voxel_adapter.py`：将当前 OctoMap 的“2.5D 柱体”（column/top_z/collision_base_z）适配为可查询的 `VoxelOccupancy`（支持 is_occupied((x,y,z))）
+新增文件/模块：
+
+- `app/planning/dstar_lite_3d.py`
+  - 3D D* Lite（state=(x,y,z)）
+  - 26 邻域（dx,dy,dz ∈ {-1,0,1} 且不全为 0）
+  - 3D Euclidean heuristic（Phase 1 直接用离散格单位）
+  - 3D step cost（26 邻域仅 1/√2/√3 三类步长）
+  - `update_vertex` 已升维到 (x,y,z)
+  - **注意：目前 open list `U` 仍用 dict + `min(U)` 扫描**，适合小图验证，不适合 RK3588 长期运行
+
+- `app/mapping/octomap_voxel_adapter.py`
+  - 将 `app/mapping/octomap.py::OctoMap.columns`（2.5D 柱体：top_z/collision_base_z/terrain_penalty）适配为 `VoxelOccupancy`
+  - 核心：预计算每个 (x,y) 的占用 z 区间 `ColumnVoxelRange[z_lo, z_hi)`，使得 `is_occupied((x,y,z))` 为 O(1)
+  - penalty 目前按 (x,y) 投影复用 terrain_penalty（Phase 1 简化）
 
 关键约定：
 
 - 体素 z 区间语义为 **[z_lo, z_hi)**（半开区间），避免 `top_z` 为整数时出现边界层误判占用。
-- 3D demo 默认使用 `ManualHeightProvider(default_z=15)` 给 start/goal 提供 z（可用 `--z0` 覆盖）。
+- 3D demo 起点高度由 `ManualHeightProvider(default_z=args.z0)` 给出；目标点默认落地（goal_z=0）。
+
+#### B.1 工程现状分析（优缺点）
+
+优点：
+
+1) **迁移路径清晰、侵入性低**：
+- `OctoMap` 继续维持 2.5D columns（易从语义分割的“高度表”构建）；
+- 通过 `OctoMapVoxelAdapter` 提供统一的 `VoxelOccupancy.is_occupied()` 查询，把 3D 规划与建图解耦。
+
+2) **3D 查询开销可控**：
+- occupancy 查询通过区间 `[z_lo,z_hi)` 判定，避免了全体素存储与 3D 数组的内存开销。
+
+3) **D* Lite 3D 已具备正确的升维骨架**：
+- `neighbors/cost/heuristic/update_vertex` 均为 3D；
+- `g/rhs` 采用惰性 dict（避免初始化 W*H*Z）。
+
+不足/风险：
+
+1) **核心性能瓶颈（RK3588 风险最大）**：
+- `compute_path()` 里 `s = min(self.U, key=self.U.get)` 是 O(|U|) 扫描；3D 下 |U| 会显著变大（邻域从 8->26），这会成为首要瓶颈。
+
+2) **启发式尺度未引入真实分辨率**：
+- `heuristic()` 直接用离散格的欧氏距离；若未来 xy_resolution 与 z_resolution 不同（真实世界往往不同），需要改为“尺度化欧氏距离”。
+
+3) **起点/终点高度策略仍偏 demo**：
+- 当前 `DStarLite3D.__post_init__` 里 goal 强制 z=0；start 使用 height_source 给的 z，但接口使用上目前存在不一致（详见后续迁移建议）。
+
+4) **3D 可视化 demo 仍存在 brute-force 扫描**：
+- `pathplan_3d.py` / `pathplan_3d_dynamic.py` 的 occupied voxels 抽样是扫全空间（O(W*H*Z)），仅适合 PC 调试。
+
+#### B.2 后续“全 3D 路径规划”演进思路（从 Phase 1 到可上板）
+
+下面给出一个尽量“平滑迁移”的路线图：先保持现有 2.5D columns 建图不变，再逐步提升为真正的 3D 占用体（可接点云/深度）。
+
+**Phase 2：把 3D D* Lite 做到可在 RK3588 上稳定跑（必须做）**
+
+1) Open list 优化：
+- 将 `U: dict[state->key]` + `min(U)` 扫描替换为 `heapq`（优先队列），并用“惰性删除/版本号”处理重复 key。
+- 这是 3D 下最关键的性能改造点。
+
+2) 邻域与代价进一步工程化：
+- 26 邻域已实现，但建议把 motion 与 step_cost 预生成（目前已做 `_step_cost` 常量化）；
+- 将 `neighbors()` 改为生成器/预分配 list，减少 Python 层对象分配。
+
+3) 启发式与代价尺度化：
+- 将 `heuristic()` 改为：
+  - dx = (ax-bx)*xy_resolution
+  - dy = (ay-by)*xy_resolution
+  - dz = (az-bz)*z_resolution
+  - h = sqrt(dx^2+dy^2+dz^2)
+- 同理 `cost()` 的 base step cost 也应使用分辨率加权（特别是 z_resolution != xy_resolution 时）。
+
+4) 约束/不可行性剪枝：
+- 增加“飞行高度上下界”（比如 z_min/z_max 或动态层范围），避免无意义地搜索过高或过低层。
+合理，初次规划路径之后，后续仅需要更新无人机所在高度附件几层即可。
+
+**Phase 3：数据层真正升维（从 2.5D columns -> 真 3D occupancy）**
+
+1) 从 columns 扩展为“多段占用区间”或“稀疏体素集合”
+- 当前每个 (x,y) 只有一个区间（grounded 或 canopy 的单段）。真实 3D（点云/稠密障碍）可能出现多段占用。
+- 可将 `_ranges[(x,y)]` 升级为 `list[range]` 或更紧凑的结构（例如两个区间：ground + canopy）。
+
+2) 融合动态/增量更新
+- `OctoMap` 有 `revision` 与 `update_columns()`，可作为增量更新入口；
+- 后续可将“列变化”映射为“受影响体素”的增删，并在 D* Lite 中触发 `update_vertex`（更贴近 D* Lite 本来用于动态环境的优势）。
+
+**Phase 4：上板性能路线（RK3588）**
+
+可能的瓶颈点（按优先级）：
+
+- P0：D* Lite open list 扫描（必须换 heap）
+- P1：3D 26 邻域带来的 neighbors 扩张（每步 26 次 cost/occupied 检查）
+- P1：Python dict 频繁 get/set（g/rhs/U）
+- P2：occupied voxels 可视化扫描 O(W*H*Z)（上板应完全禁用或改为直接从 columns/ranges 生成点集）
+
+建议优化顺序：
+1) heapq + lazy delete
+2) 将关键循环局部变量绑定（如把 `is_occupied`、`_g` 本地化），减少 attribute lookup
+3) 若仍不够：考虑用 `numba`/Cython/pybind11 把 inner loop（neighbors+cost+update_vertex）下沉
+
+> 提示：若你希望我后续继续把 Phase 2 的 heapq 版本落地，我建议先在 PC 上用 `tests/test_planner_3d.py` 跑通，再做性能 profiling（cProfile）。
 
 ### C) 3D 可视化 demo（matplotlib mplot3d）
-
-新增 demo：
-
-- `app/planning/pathplan_3d_demo.py`：从 runs/segment 最新 masks 构建 OctoMap → VoxelOccupancy → DStarLite3D，并可用 mplot3d 可视化 “占用体素 + 3D 路径”。
-
-运行示例：
-
-```bash
-# 仅计算并打印路径（不弹窗）
-python -m app.planning.pathplan_3d_demo
-
-# 计算 + 3D 可视化（推荐）
-python -m app.planning.pathplan_3d_demo --viz
-
-# 渲染加速（occupied 点过多时）
-python -m app.planning.pathplan_3d_demo --viz --viz-skip 2 --viz-max-voxels 30000 --viz-alpha 0.06
-
-# 手动指定 masks 目录
-python -m app.planning.pathplan_3d_demo --mask-dir runs/segment/exp/masks --viz
-```
+先写在pathplan_3d 和pathplan_3d_dynamic就好
 
 验证命令：
 

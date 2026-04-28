@@ -10,18 +10,24 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
+# 允许 VSCode 直接运行本文件（不要求 python -m）
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from app.config import DEFAULT_CONFIG
 from app.mapping.grid_map import GridMapHandler, load_mask_entries
 from app.mapping.octomap import OctoMap
 from app.paths import resolve_path
 from app.planning.dstar_lite_3d import DStarLite3D
-from app.planning.octomap_voxel_adapter import OctoMapVoxelAdapter
+from app.mapping.octomap_voxel_adapter import OctoMapVoxelAdapter
 from app.planning.pathplan_batch import get_latest_segmentation_run_dir
 # 提前引入，避免在交互事件中反复触发模块检索
 from app.planning.space3d import ManualHeightProvider
@@ -232,7 +238,6 @@ class PathPlanner3DDynamic:
         if not all([self.fig, self.ax, self.planner, self.path_artist]):
             return
 
-        # 高速更新 Path 缓存
         if self.path3d:
             p = np.asarray(self.path3d, dtype=np.int32)
             self.path_artist.set_data(p[:, 0], p[:, 1])
@@ -241,7 +246,6 @@ class PathPlanner3DDynamic:
             self.path_artist.set_data([], [])
             self.path_artist.set_3d_properties([])
 
-        # 静默更新起终点
         s, g = self.planner.start, self.planner.goal
         if self.start_artist:
             self.start_artist._offsets3d = ([s[0]], [s[1]], [s[2]])
@@ -287,9 +291,8 @@ class PathPlanner3DDynamic:
             # 强制探测地面 (Z=0) 的空位
             safe_g = _snap_to_free_cell_xyz(self.occupancy, (x, y, 0), r_xy_max=15, z_search=0)
             self.goal_xy = (safe_g[0], safe_g[1])
-            
-            # 彻底重置 Planner (防止旧路径残留)
-            from app.planning.space3d import ManualHeightProvider
+
+            # Phase 2：goal 变化仍采用简单重建（路径实时更新优先）
             hp = ManualHeightProvider(default_z=self.z0)
             self.planner = DStarLite3D(self.start_xy, self.goal_xy, self.occupancy, hp)
             self.planner.goal = safe_g
