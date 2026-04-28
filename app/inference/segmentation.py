@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
 from app.config import DEFAULT_CONFIG
 from app.paths import resolve_path
 
-MANUAL_SOURCE: str | Path | None = r"D:\qingyu\Yosegment\test_input\000456.jpg"
+MANUAL_SOURCE: str | Path | None = "test_input/000456.jpg"
 MANUAL_WEIGHTS: str | Path | None = "weights/0414_qy++.pt"
 MANUAL_DATA_YAML: str | Path | None = "data/my.yaml"
 MANUAL_PROJECT: str | Path | None = "runs/segment"
