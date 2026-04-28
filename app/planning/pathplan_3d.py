@@ -32,7 +32,7 @@ from app.paths import resolve_path
 from app.planning.dstar_lite_3d import DStarLite3D
 from app.mapping.octomap_voxel_adapter import OctoMapVoxelAdapter
 from app.planning.space3d import ManualHeightProvider
-from app.planning.pathplan_batch import get_latest_segmentation_run_dir
+from app.planning.pathplanbatch import get_latest_segmentation_run_dir
 from app.planning.space3d import GridSpec3D
 
 
