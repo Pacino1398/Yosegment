@@ -24,6 +24,33 @@
 python -m app.mapping.octomap --mask-dir runs/segment/exp2/masks
 ```
 
+可选：对每个 mask instance 在**像素域**做固定尺寸 tile 栅格化，并在导出的 snapshot 中附带稀疏矩形集合（xywh + coverage）：
+
+```bash
+python -m app.mapping.octomap --mask-dir runs/segment/exp2/masks --tile-w-px 16 --tile-h-px 16 --min-coverage 0.3
+```
+
+- `tile-w-px / tile-h-px`：tile 宽高（单位：像素）
+- `min-coverage`：tile 内前景像素占比阈值（0~1），低于该值的 tile 会被丢弃
+- 导出字段名：`mask_instance_tiles`
+  - 类型：`list[dict]`
+  - 每个元素包含：`class_id / confidence / mask_index / image_stem / filename / tiles`
+- `tiles` 为 `tuple[{x,y,w,h,coverage}]`（`x,y` 为 tile 左上角像素坐标）
+
+#### A.1 pixel tiles 可视化（调试用）
+
+如果你想直接查看某一张 mask 在像素域被切成了哪些 tile（绿色框为保留的 tile，黄色数字为 coverage），可以用：
+
+```bash
+python -m app.mapping.pixel_tiles_viz --mask-path runs/segment/exp2/masks/4_xxx.png --tile-w-px 16 --tile-h-px 16 --min-coverage 0.3
+```
+
+也可以保存为图片：
+
+```bash
+python -m app.mapping.pixel_tiles_viz --mask-path runs/segment/exp2/masks/4_xxx.png --tile-w-px 16 --tile-h-px 16 --min-coverage 0.3 --save runs/debug/tile_viz.png
+```
+
 如果你是在 `app/mapping/` 目录下直接执行脚本，也可以这样运行：
 
 ```bash
