@@ -82,6 +82,11 @@ class GridMapHandler:
         self.grid_w = grid_w
         self.grid_h = grid_h
         self.grid_scale = grid_scale
+
+        # Optional: keep sparse pixel-domain tiling result for each mask instance.
+        # Each item is a list[dict] with keys: x,y,w,h,coverage
+        self.mask_instance_tiles: list[dict[str, object]] = []
+
         self.obstacles: set[tuple[int, int]] = set()
         self.blocked_obstacles: set[tuple[int, int]] = set()
         self.traversable_obstacles: set[tuple[int, int]] = set()
@@ -94,7 +99,16 @@ class GridMapHandler:
         self.TRAVERSABLE_CLASSES = set(TRAVERSABLE_CLASSES)
         self.TARGET_CLASS = TARGET_CLASS
 
-    def batch_masks_to_obs(self, mask_list: Sequence[MaskEntry]):
+    def batch_masks_to_obs(
+        self,
+        mask_list: Sequence[MaskEntry],
+        *,
+        tile_w_px: int | None = None,
+        tile_h_px: int | None = None,
+        min_coverage: float = 0.3,
+    ):
+        from app.mapping.pixel_tiles import mask_to_tiles_xywh
+
         full_obs: set[tuple[int, int]] = set()
         blocked_obs: set[tuple[int, int]] = set()
         traversable_obs: set[tuple[int, int]] = set()
@@ -102,6 +116,7 @@ class GridMapHandler:
         obstacle_heights: dict[tuple[int, int], int] = {}
         obstacle_class_ids: dict[tuple[int, int], int] = {}
         mask_instances: list[dict[str, object]] = []
+        mask_instance_tiles: list[dict[str, object]] = []
         target_point = None
 
         if not mask_list:
@@ -113,6 +128,7 @@ class GridMapHandler:
             self.obstacle_heights = obstacle_heights
             self.obstacle_class_ids = obstacle_class_ids
             self.mask_instances = mask_instances
+            self.mask_instance_tiles = mask_instance_tiles
             self.target_point = target_point
             return full_obs, target_point
 
@@ -178,6 +194,34 @@ class GridMapHandler:
                             "center_cell": center_cell,
                         }
                     )
+
+                    # Optional: tile the pixel region with fixed (w,h) pixels and store sparse xywh.
+                    if tile_w_px is not None and tile_h_px is not None:
+                        tiles = mask_to_tiles_xywh(
+                            mask,
+                            tile_w_px=int(tile_w_px),
+                            tile_h_px=int(tile_h_px),
+                            min_coverage=float(min_coverage),
+                        )
+                        mask_instance_tiles.append(
+                            {
+                                "class_id": cls_id,
+                                "confidence": confidence,
+                                "mask_index": metadata.get("mask_index"),
+                                "image_stem": metadata.get("image_stem"),
+                                "filename": metadata.get("filename"),
+                                "tiles": tuple(
+                                    {
+                                        "x": t.x,
+                                        "y": t.y,
+                                        "w": t.w,
+                                        "h": t.h,
+                                        "coverage": t.coverage,
+                                    }
+                                    for t in tiles
+                                ),
+                            }
+                        )
             elif cls_id == self.TARGET_CLASS:
                 cx = int(np.mean(xs) // self.grid_scale)
                 cy = int(np.mean(ys) // self.grid_scale)
@@ -191,6 +235,7 @@ class GridMapHandler:
         self.obstacle_heights = obstacle_heights
         self.obstacle_class_ids = obstacle_class_ids
         self.mask_instances = mask_instances
+        self.mask_instance_tiles = mask_instance_tiles
         self.target_point = target_point
         print(f"\n栅格地图完成 | 障碍物栅格：{len(full_obs)}")
         return blocked_obs, target_point

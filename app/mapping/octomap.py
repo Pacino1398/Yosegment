@@ -78,6 +78,7 @@ class OctoMap:
         self.obstacle_heights: dict[Cell2D, int] = {}
         self.obstacle_class_ids: dict[Cell2D, int] = {}
         self.mask_instances: list[dict[str, object]] = []
+        self.mask_instance_tiles: list[dict[str, object]] = []
         self.target_point: Cell2D | None = None
         self.columns: dict[Cell2D, ColumnState] = {}
         self.max_z = 0.0
@@ -91,6 +92,7 @@ class OctoMap:
         self.obstacle_heights = dict(self.grid_handler.obstacle_heights)
         self.obstacle_class_ids = dict(self.grid_handler.obstacle_class_ids)
         self.mask_instances = list(self.grid_handler.mask_instances)
+        self.mask_instance_tiles = list(getattr(self.grid_handler, "mask_instance_tiles", []))
         self.target_point = self.grid_handler.target_point
 
     def _normalize_column_state(self, cell: Cell2D, value: ColumnState | Mapping[str, Any] | int | float | None) -> ColumnState | None:
@@ -235,6 +237,7 @@ class OctoMap:
             "obstacle_class_ids": dict(self.obstacle_class_ids),
             "columns": dict(self.columns),
             "mask_instances": list(self.mask_instances),
+            "mask_instance_tiles": list(self.mask_instance_tiles),
             "revision": self.revision,
         }
 
@@ -443,6 +446,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build and display a local 2.5D map view from segmentation masks.")
     parser.add_argument("--mask-dir", type=str, default=None, help="Directory containing mask PNG files.")
     parser.add_argument("--grid-scale", type=int, default=DEFAULT_CONFIG.default_grid_scale, help="Pixel-to-grid scale.")
+
+    # Optional: pixel-domain tiling (xywh in pixel coordinates) for each mask instance.
+    parser.add_argument("--tile-w-px", type=int, default=None, help="Tile width in pixels for xywh tiling export.")
+    parser.add_argument("--tile-h-px", type=int, default=None, help="Tile height in pixels for xywh tiling export.")
+    parser.add_argument(
+        "--min-coverage",
+        type=float,
+        default=0.3,
+        help="Min foreground coverage ratio within a tile to keep it (0~1).",
+    )
+
     parser.add_argument("--uav-altitude", type=float, default=DEFAULT_UAV_ALTITUDE, help="Default UAV altitude in the local 2.5D view.")
     parser.add_argument("--elev", type=float, default=28.0, help="3D camera elevation angle.")
     parser.add_argument("--azim", type=float, default=-58.0, help="3D camera azimuth angle.")
@@ -458,7 +472,17 @@ def main() -> None:
     grid_w, grid_h = OctoMap.infer_grid_size(mask_dir, args.grid_scale)
     octomap = OctoMap(grid_w=grid_w, grid_h=grid_h, grid_scale=args.grid_scale)
     mask_list = load_mask_entries(mask_dir, octomap.grid_handler)
-    octomap.masks_to_obstacle(mask_list)
+
+    # Build grid + columns; optionally attach pixel-domain tiles to grid_handler and sync into octomap snapshot.
+    octomap.grid_handler.batch_masks_to_obs(
+        mask_list,
+        tile_w_px=args.tile_w_px,
+        tile_h_px=args.tile_h_px,
+        min_coverage=args.min_coverage,
+    )
+    octomap._sync_from_grid_handler()
+    octomap.build_octomap(octomap.grid_handler.blocked_obstacles)
+
     octomap.show_local_map_3d(elev=args.elev, azim=args.azim, uav_altitude=args.uav_altitude)
 
 
@@ -466,3 +490,4 @@ if __name__ == "__main__":
     main()
 
 # python -m app.mapping.octomap --mask-dir runs/segment/exp2/masks
+# python -m app.mapping.octomap --mask-dir runs/segment/exp2/masks --tile-w-px 16 --tile-h-px 16 --min-coverage 0.3
