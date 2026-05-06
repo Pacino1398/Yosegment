@@ -97,14 +97,14 @@ python3 -m tools.test_rknn_infer \
 - 视频文件、图片、目录
 
 ONNX 后端示例（CPU/或OpenCV-DNN）：
-python3 app/planning/realtime_pathplan.py \
+python3 -m app.planning.realtime_pathplan \
   --source 0 \
   --weights ./weights/0414_qy++.onnx \
   --data ./data/my.yaml \
   --view
 
 RKNN 后端示例（NPU 推理）：
-python3 app/planning/realtime_pathplan.py \
+python3 -m app.planning.realtime_pathplan \
   --source 0 \
   --weights ./weights/0414_qy++.rknn \
   --backend rknn \
@@ -113,7 +113,7 @@ python3 app/planning/realtime_pathplan.py \
   --view
 
 如果你的 .rknn 是按 NHWC uint8 输入构建：
-python3 app/planning/realtime_pathplan.py \
+python3 -m app.planning.realtime_pathplan \
   --source 0 \
   --weights ./weights/0414_qy++.rknn \
   --backend rknn \
