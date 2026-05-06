@@ -11,10 +11,21 @@ import numpy as np
 
 MaskEntry = list
 TARGET_CLASS = 0
-TRAVERSABLE_CLASSES: set[int] = {1, 5}
+TRAVERSABLE_CLASSES: set[int] = {
+    1,
+    2,
+    3,
+    4, 
+    5,
+    6
+    }
 TRAVERSABLE_CLASS_PENALTIES: dict[int, float] = {
-    4: 6.0,
-    6: 8.0,
+    1: 0,
+    2: 0,
+    3: 4.0,
+    4: 4.0,
+    5: 1.0,
+    6: 4.0,
 }
 CLASS_HEIGHTS: dict[int, int] = {
     1: 3,   # car
@@ -238,7 +249,10 @@ class GridMapHandler:
         self.mask_instance_tiles = mask_instance_tiles
         self.target_point = target_point
         print(f"\n栅格地图完成 | 障碍物栅格：{len(full_obs)}")
-        return blocked_obs, target_point
+        # IMPORTANT: keep backward-compatible return semantics for planners/tests:
+        # return the full obstacle set (including traversable classes) for legacy callers,
+        # while `self.blocked_obstacles` remains the strict blocked set.
+        return full_obs, target_point
 
     def show_map(self):
         plt.figure(figsize=(8, 8))

@@ -66,6 +66,14 @@ class PathPlanner:
         mask_dir: str | Path | None = None,
         output_project: str | Path | None = None,
         data_yaml: str | Path | None = None,
+        *,
+        tile_w_px: int | None = None,
+        tile_h_px: int | None = None,
+        min_coverage: float = 0.3,
+        show_tile_graph: bool = False,
+        tile_graph_adj: str = "4n",
+        tile_graph_alpha: float = 0.28,
+        tile_graph_max_edges: int = 2500,
     ):
         self.grid_scale = grid_scale
         self.mask_dir = Path(mask_dir) if mask_dir else get_default_mask_dir()
@@ -79,6 +87,7 @@ class PathPlanner:
         self.obstacle_heights = {}
         self.obstacle_class_ids = {}
         self.mask_instances = []
+        self.mask_instance_tiles = []
         self.class_names = self._load_class_names(data_yaml)
         self.target_point = None
         self.start = (self.grid_w // 2, self.grid_h // 2)
@@ -93,6 +102,18 @@ class PathPlanner:
         self.path_line = None
         self.start_dot = None
         self.goal_dot = None
+
+        # --- Optional pixel-domain tile graph (additive) ---
+        self.tile_w_px = tile_w_px
+        self.tile_h_px = tile_h_px
+        self.min_coverage = float(min_coverage)
+        self.show_tile_graph = bool(show_tile_graph)
+        self.tile_graph_adj = str(tile_graph_adj)
+        self.tile_graph_alpha = float(tile_graph_alpha)
+        self.tile_graph_max_edges = int(tile_graph_max_edges)
+        self.tile_graph_patches = []
+        self.tile_graph_lines = []
+
         self._init_grid_map()
         self._init_planner()
         self._init_plot()
@@ -143,13 +164,19 @@ class PathPlanner:
 
     def _init_grid_map(self):
         grid_handler = GridMapHandler(self.grid_w, self.grid_h, self.grid_scale)
-        self.obs, self.target_point = grid_handler.batch_masks_to_obs(load_mask_entries(self.mask_dir, grid_handler))
+        self.obs, self.target_point = grid_handler.batch_masks_to_obs(
+            load_mask_entries(self.mask_dir, grid_handler),
+            tile_w_px=self.tile_w_px,
+            tile_h_px=self.tile_h_px,
+            min_coverage=self.min_coverage,
+        )
         self.display_obs = set(grid_handler.obstacles)
         self.traversable_obs = set(grid_handler.traversable_obstacles)
         self.terrain_penalties = dict(grid_handler.terrain_penalties)
         self.obstacle_heights = dict(grid_handler.obstacle_heights)
         self.obstacle_class_ids = dict(grid_handler.obstacle_class_ids)
         self.mask_instances = list(grid_handler.mask_instances)
+        self.mask_instance_tiles = list(getattr(grid_handler, "mask_instance_tiles", []))
 
         if self.target_point is not None:
             self.goal = self.target_point
@@ -304,6 +331,21 @@ class PathPlanner:
             for annotation in self.class_annotations:
                 annotation.remove()
             self.class_annotations.clear()
+
+            # --- remove previous tile-graph overlays (additive) ---
+            for patch in self.tile_graph_patches:
+                try:
+                    patch.remove()
+                except Exception:
+                    pass
+            self.tile_graph_patches.clear()
+            for line in self.tile_graph_lines:
+                try:
+                    line.remove()
+                except Exception:
+                    pass
+            self.tile_graph_lines.clear()
+
             for x, y in self.display_obs:
                 rect = plt.Rectangle((x, y), 1, 1, color=self._get_obstacle_color((x, y)))
                 self.ax.add_patch(rect)
@@ -319,6 +361,49 @@ class PathPlanner:
                 )
                 self.ax.add_patch(overlay)
                 self.obs_patches.append(overlay)
+
+            # --- draw tile-graph overlays (optional, additive) ---
+            if self.show_tile_graph and self.tile_w_px and self.tile_h_px and self.mask_instance_tiles:
+                from app.mapping.tile_graph import build_tile_graph
+
+                nodes, edges = build_tile_graph(self.mask_instance_tiles, adj="8n" if self.tile_graph_adj == "8n" else "4n")
+
+                # tiles: pixel -> grid coords by dividing by grid_scale
+                for n in nodes:
+                    gx = n.x / float(self.grid_scale)
+                    gy = n.y / float(self.grid_scale)
+                    gw = n.w / float(self.grid_scale)
+                    gh = n.h / float(self.grid_scale)
+                    tile_rect = plt.Rectangle(
+                        (gx, gy),
+                        gw,
+                        gh,
+                        fill=False,
+                        edgecolor="#00bcd4",
+                        linewidth=0.8,
+                        alpha=max(0.0, min(1.0, self.tile_graph_alpha)),
+                    )
+                    self.ax.add_patch(tile_rect)
+                    self.tile_graph_patches.append(tile_rect)
+
+                # edges: draw center-to-center
+                max_edges = max(0, int(self.tile_graph_max_edges))
+                for e in edges[:max_edges]:
+                    u = nodes[e.u]
+                    v = nodes[e.v]
+                    x0 = (u.cx / float(self.grid_scale))
+                    y0 = (u.cy / float(self.grid_scale))
+                    x1 = (v.cx / float(self.grid_scale))
+                    y1 = (v.cy / float(self.grid_scale))
+                    (ln,) = self.ax.plot(
+                        [x0, x1],
+                        [y0, y1],
+                        color="#00bcd4",
+                        linewidth=0.6,
+                        alpha=max(0.0, min(1.0, self.tile_graph_alpha)),
+                    )
+                    self.tile_graph_lines.append(ln)
+
             for (x, y), label, text_color in self._build_class_annotations():
                 annotation = self.ax.text(
                     x,
@@ -411,6 +496,16 @@ def parse_args():
     parser.add_argument("--project", type=Path, default=get_default_pathplan_project_dir(), help="路径规划输出根目录")
     parser.add_argument("--data", type=Path, default=DEFAULT_CONFIG.data_yaml, help="数据配置 yaml")
     parser.add_argument("--grid-scale", type=int, default=DEFAULT_CONFIG.default_grid_scale, help="栅格缩放")
+
+    # --- Optional: tile-graph visualization (additive) ---
+    parser.add_argument("--tile-w-px", type=int, default=None, help="像素域 tiling 的 tile 宽度（像素）。")
+    parser.add_argument("--tile-h-px", type=int, default=None, help="像素域 tiling 的 tile 高度（像素）。")
+    parser.add_argument("--min-coverage", type=float, default=0.3, help="tile 内前景像素覆盖率阈值（0~1）。")
+    parser.add_argument("--show-tile-graph", action="store_true", help="叠加显示像素域 tile-graph（矩形+连边）。")
+    parser.add_argument("--tile-graph-adj", type=str, default="4n", choices=["4n", "8n"], help="tile-graph 邻接类型")
+    parser.add_argument("--tile-graph-alpha", type=float, default=0.28, help="tile-graph 叠加层透明度")
+    parser.add_argument("--tile-graph-max-edges", type=int, default=2500, help="最多绘制多少条 tile-graph 边，避免太密")
+
     return parser.parse_args()
 
 
@@ -421,9 +516,21 @@ def main():
         mask_dir=args.mask_dir,
         output_project=args.project,
         data_yaml=args.data,
+        tile_w_px=args.tile_w_px,
+        tile_h_px=args.tile_h_px,
+        min_coverage=args.min_coverage,
+        show_tile_graph=args.show_tile_graph,
+        tile_graph_adj=args.tile_graph_adj,
+        tile_graph_alpha=args.tile_graph_alpha,
+        tile_graph_max_edges=args.tile_graph_max_edges,
     )
     planner.run()
 
 
 if __name__ == "__main__":
     main()
+
+'''
+python -m app.planning.pathplan --mask-dir runs/segment/exp2/masks --grid-scale 10 --tile-w-px 16 --tile-h-px 16 --min-coverage 0.3 --show-tile-graph --tile-graph-adj 4n
+
+'''
