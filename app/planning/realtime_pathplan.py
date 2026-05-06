@@ -329,20 +329,45 @@ def run_realtime_pathplan(
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="使用 ONNX 分割结果直接做实时路径规划，不经过 mask 落盘中转。")
+    parser = argparse.ArgumentParser(
+        description=(
+            "实时分割 + 路径规划入口。支持 ONNXRuntime/OpenCV-DNN(ONNX) 或 RKNNRuntime(RK3588 NPU)。\n"
+            "提示：运行建议使用模块方式：python -m app.planning.realtime_pathplan ..."
+        )
+    )
     parser.add_argument("--source", default=str(get_default_source_dir()), help="输入图片、视频、目录、摄像头索引或流地址")
-    parser.add_argument("--weights", default=str(get_default_onnx_weights()), help="ONNX 权重路径")
+
+    parser.add_argument(
+        "--backend",
+        default="onnx",
+        choices=["onnx", "rknn"],
+        help="推理后端：onnx=ONNXRuntime/OpenCV DNN；rknn=RKNNRuntime(NPU)",
+    )
+
+    parser.add_argument(
+        "--weights",
+        default=str(get_default_onnx_weights()),
+        help="模型权重路径：backend=onnx 为 .onnx；backend=rknn 为 .rknn",
+    )
     parser.add_argument("--data", default=str(get_default_data_yaml()), help="数据配置 yaml")
+
+    parser.add_argument(
+        "--rknn-input-format",
+        default="nchw_fp32",
+        choices=["nchw_fp32", "nhwc_u8"],
+        help="RKNN 输入格式（仅 backend=rknn 有效）：nchw_fp32 或 nhwc_u8",
+    )
+
     parser.add_argument("--project", type=Path, default=get_default_pathplan_project_dir(), help="路径规划输出根目录")
-    parser.add_argument("--device", default=DEFAULT_CONFIG.default_device, help="推理设备")
+    parser.add_argument("--device", default=DEFAULT_CONFIG.default_device, help="推理设备(onnx 有效)，如 cpu / cuda:0")
     parser.add_argument("--conf-thres", type=float, default=DEFAULT_CONFIG.default_conf_thres, help="置信度阈值")
     parser.add_argument("--iou-thres", type=float, default=0.45, help="NMS IoU 阈值")
     parser.add_argument("--imgsz", nargs="+", type=int, default=[640], help="推理尺寸，支持 --imgsz 640 或 --imgsz 640 640")
     parser.add_argument("--grid-scale", type=int, default=DEFAULT_CONFIG.default_grid_scale, help="栅格缩放")
     parser.add_argument("--view", action="store_true", help="实时显示规划画面，按 q 或 Esc 退出")
     parser.add_argument("--nosave", action="store_true", help="只显示不保存输出")
-    parser.add_argument("--dnn", action="store_true", help="使用 OpenCV DNN 加载 ONNX")
-    parser.add_argument("--half", action="store_true", help="启用 FP16")
+    parser.add_argument("--dnn", action="store_true", help="使用 OpenCV DNN 加载 ONNX（仅 backend=onnx）")
+    parser.add_argument("--half", action="store_true", help="启用 FP16（仅 backend=onnx）")
     return parser.parse_args()
 
 
@@ -368,6 +393,8 @@ def main():
         save=not args.nosave,
         dnn=args.dnn,
         half=args.half,
+        backend=args.backend,
+        rknn_input_format=args.rknn_input_format,
     )
 
 
