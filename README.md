@@ -1,5 +1,19 @@
 # Yosegmentne
 
+======================================================================
+当前节点：
+已完成 mask→固定像素 tile（xywh+coverage）提取
+把 tiles 沿 `GridMapHandler -> OctoMap -> export_planner_snapshot(mask_instance_tiles)` 全链路打通；
+同时提供 `pixel_tiles_viz` 可视化脚本
+ 后续方案：
+ 核实高度信息、构建octomap --> 作为ros2话题信息
+
+======================================================================
+
+
+
+
+
 补齐了 **全 3D 路径规划（Phase 1）** 与 **3D 可视化 demo**，并保留原有 **局部 2.5D 建图与展示**。
 
 ### A) 局部 2.5D 建图与展示（OctoMap columns）

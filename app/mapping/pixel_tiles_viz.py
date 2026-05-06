@@ -105,7 +105,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main(
-    mask_path: str = "runs/segment/exp2/masks/1_000456_2.png",
+    mask_path: str = "runs/segment/exp2/masks/6_000456_0.png",
     tile_w_px: int = 16,
     tile_h_px: int = 16,
     min_coverage: float = 0.3,
