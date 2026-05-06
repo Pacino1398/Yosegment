@@ -20,7 +20,7 @@ Notes
 - This is mainly for visualization/debug; cost model is intentionally minimal.
 
 
-通过pathplan.py可视化：
+通过pathplan.py可视化:
 python -m app.planning.pathplan --mask-dir runs/segment/exp2/masks --grid-scale 10 --tile-w-px 16 --tile-h-px 16 --min-coverage 0.3 --show-tile-graph --tile-graph-adj 4n
 
 

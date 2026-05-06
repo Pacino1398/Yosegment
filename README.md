@@ -8,7 +8,7 @@
 
 ---
 
-## 文档导航（已拆分）
+## 文档导航
 
 - 代码/架构/函数解析（按 .py 模块）：[`docs/PY_API.md`](docs/PY_API.md)
 - 运行方式/参数/示例（按入口脚本）：[`docs/USAGE.md`](docs/USAGE.md)

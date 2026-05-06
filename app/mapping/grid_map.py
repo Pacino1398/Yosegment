@@ -17,12 +17,15 @@ TRAVERSABLE_CLASSES: set[int] = {
     3,
     4, 
     5,
-    6,
-    9
+    6
     }
 TRAVERSABLE_CLASS_PENALTIES: dict[int, float] = {
-    4: 6.0,
-    6: 8.0,
+    1: 0,
+    2: 0,
+    3: 4.0,
+    4: 4.0,
+    5: 1.0,
+    6: 4.0,
 }
 CLASS_HEIGHTS: dict[int, int] = {
     1: 3,   # car
