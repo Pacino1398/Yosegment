@@ -28,6 +28,45 @@ from app.planning.pathplanbatch import (
     render_plan_view,
 )
 
+
+def build_realtime_segmenter(
+    backend: str,
+    weights: str | Path | None,
+    data_yaml: str | Path | None,
+    device: str | None,
+    imgsz: int | tuple[int, int],
+    conf_thres: float | None,
+    iou_thres: float,
+    dnn: bool,
+    half: bool,
+    rknn_input_format: str = "nchw_fp32",
+):
+    backend = (backend or "onnx").lower().strip()
+    if backend == "onnx":
+        return OnnxRealtimeSegmenter(
+            weights=weights,
+            data_yaml=data_yaml,
+            device=device,
+            imgsz=imgsz,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            dnn=dnn,
+            half=half,
+        )
+
+    if backend == "rknn":
+        from app.inference.rknn_realtime import RknnRealtimeSegmenter
+
+        return RknnRealtimeSegmenter(
+            weights=weights,
+            imgsz=imgsz,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            input_format=rknn_input_format,
+        )
+
+    raise ValueError(f"未知 backend={backend}，仅支持 onnx / rknn")
+
 STREAM_SCHEMES = ("rtsp://", "rtmp://", "http://", "https://")
 WINDOW_NAME = "realtime_pathplan"
 
@@ -230,6 +269,8 @@ def run_realtime_pathplan(
     save: bool = True,
     dnn: bool = False,
     half: bool = False,
+    backend: str = "onnx",
+    rknn_input_format: str = "nchw_fp32",
 ) -> Path | None:
     source_value = resolve_source(source)
     current_grid_scale = grid_scale if grid_scale is not None else DEFAULT_CONFIG.default_grid_scale
@@ -239,7 +280,8 @@ def run_realtime_pathplan(
         run_dir = create_pathplan_run_dir(project_path)
         print(f"路径规划输出目录: {run_dir}")
 
-    segmenter = OnnxRealtimeSegmenter(
+    segmenter = build_realtime_segmenter(
+        backend=backend,
         weights=weights,
         data_yaml=data_yaml,
         device=device,
@@ -248,6 +290,7 @@ def run_realtime_pathplan(
         iou_thres=iou_thres,
         dnn=dnn,
         half=half,
+        rknn_input_format=rknn_input_format,
     )
     class_names = load_class_names(resolve_path(data_yaml, get_default_data_yaml()))
 
