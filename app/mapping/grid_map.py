@@ -11,14 +11,15 @@ import numpy as np
 
 MaskEntry = list
 TARGET_CLASS = 0
+
 TRAVERSABLE_CLASSES: set[int] = {
     1,
     2,
     3,
-    4, 
+    4,
     5,
-    6
-    }
+    6,
+}
 TRAVERSABLE_CLASS_PENALTIES: dict[int, float] = {
     1: 0,
     2: 0,
@@ -141,7 +142,7 @@ class GridMapHandler:
             self.mask_instances = mask_instances
             self.mask_instance_tiles = mask_instance_tiles
             self.target_point = target_point
-            return full_obs, target_point
+            return blocked_obs, target_point
 
         print(f"开始处理 {len(mask_list)} 个【障碍物】掩码\n")
 
@@ -249,10 +250,13 @@ class GridMapHandler:
         self.mask_instance_tiles = mask_instance_tiles
         self.target_point = target_point
         print(f"\n栅格地图完成 | 障碍物栅格：{len(full_obs)}")
-        # IMPORTANT: keep backward-compatible return semantics for planners/tests:
-        # return the full obstacle set (including traversable classes) for legacy callers,
-        # while `self.blocked_obstacles` remains the strict blocked set.
-        return full_obs, target_point
+        # IMPORTANT:
+        # Return semantics: the return value is the *blocked* obstacle set (strictly non-traversable).
+        # Traversable-but-penalized cells are exposed via:
+        #   - self.traversable_obstacles
+        #   - self.terrain_penalties
+        # Full occupied footprint (blocked + traversable) is exposed via `self.obstacles`.
+        return blocked_obs, target_point
 
     def show_map(self):
         plt.figure(figsize=(8, 8))
