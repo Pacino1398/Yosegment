@@ -11,7 +11,7 @@ import numpy as np
 
 MaskEntry = list
 TARGET_CLASS = 0
-TRAVERSABLE_CLASSES: set[int] = {4, 6}  # tree, forest
+TRAVERSABLE_CLASSES: set[int] = {1, 5}
 TRAVERSABLE_CLASS_PENALTIES: dict[int, float] = {
     4: 6.0,
     6: 8.0,

@@ -51,6 +51,49 @@ class OctoMap:
         self.grid_handler = GridMapHandler(grid_w, grid_h, grid_scale)
         self._reset_state()
 
+    def build_occ2d(self, *, occupied_value: int = 255, use_columns: bool = False) -> np.ndarray:
+        """Build a dense 2D occupancy image in grid coordinates.
+
+        Args:
+            occupied_value: Value to set for occupied cells (uint8).
+            use_columns: If True, mark occupancy by whether a column exists (more inclusive).
+                If False, mark occupancy by blocked_obstacles (more conservative).
+
+        Returns:
+            occ2d: uint8[grid_h, grid_w], 0=free, occupied_value=occupied.
+        """
+
+        occ = np.zeros((self.grid_h, self.grid_w), dtype=np.uint8)
+        val = np.uint8(max(0, min(255, int(occupied_value))))
+        if use_columns:
+            cells = self.columns.keys()
+        else:
+            cells = self.blocked_obstacles
+        for x, y in cells:
+            if 0 <= x < self.grid_w and 0 <= y < self.grid_h:
+                occ[y, x] = val
+        return occ
+
+    def build_z_band2d(self) -> np.ndarray:
+        """Build a dense 2D z-band map in grid coordinates.
+
+        For each occupied cell, export the dangerous vertical band [collision_base_z, top_z].
+
+        Returns:
+            z_band2d: float32[grid_h, grid_w, 2]
+                [...,0]=z_lo (collision_base_z)
+                [...,1]=z_hi (top_z)
+            Empty cells are zeros.
+        """
+
+        z_band = np.zeros((self.grid_h, self.grid_w, 2), dtype=np.float32)
+        for cell, column in self.columns.items():
+            x, y = cell
+            if 0 <= x < self.grid_w and 0 <= y < self.grid_h:
+                z_band[y, x, 0] = float(column.collision_base_z)
+                z_band[y, x, 1] = float(column.top_z)
+        return z_band
+
     @staticmethod
     def infer_grid_size(mask_dir: str | Path, grid_scale: int) -> tuple[int, int]:
         mask_path = Path(mask_dir)
