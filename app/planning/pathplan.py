@@ -170,6 +170,7 @@ class PathPlanner:
             tile_h_px=self.tile_h_px,
             min_coverage=self.min_coverage,
         )
+        # display all occupied footprint (blocked + traversable)
         self.display_obs = set(grid_handler.obstacles)
         self.traversable_obs = set(grid_handler.traversable_obstacles)
         self.terrain_penalties = dict(grid_handler.terrain_penalties)

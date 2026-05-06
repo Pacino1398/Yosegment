@@ -1,0 +1,162 @@
+YOSEGMENT 部署到 RK3588（Ubuntu 20.04/22.04 aarch64）并使用 RKNN(NPU) 推理
+
+目标
+- 将 YOSEGMENT 的实时分割推理从 onnxruntime 切换为 RKNN Runtime (Python)，在 RK3588 NPU 上运行。
+- 模型文件：weights/0414_qy++.rknn（你需要自行拷贝到该路径）。
+
+一、板端前置条件
+1) RK3588 Ubuntu 镜像需具备 NPU 驱动（rknpu2）
+- 一般官方 Ubuntu 镜像已包含。
+- 若缺失，请按你板卡厂商/镜像文档安装 rknpu2 驱动与固件。
+
+2) Python 依赖
+- numpy
+- opencv（python3-opencv 或 opencv-python）
+- rknn runtime Python 包（通常是厂商提供的 rknn_runtime wheel 或 SDK 中的 Python 包）
+
+二、将工程拷贝到板端
+推荐把整个仓库拷贝到板端某个目录，例如：/opt/Yosegment
+并确保目录结构里有：
+- app/
+- tools/
+- weights/0414_qy++.rknn
+
+三、板端安装依赖（示例）
+# 1) 系统依赖
+sudo apt update
+sudo apt install -y python3-pip python3-opencv
+
+# 2) Python 依赖
+pip3 install -U numpy
+
+# 3) 安装 RKNN Runtime（按你拿到的包为准）
+# 说明：RKNN 的 Python 包通常不在公网 pip 源，需要从板卡厂商/Rockchip SDK 获取。
+# 常见拿法（3选1）：
+# A) 厂商提供 rknn_runtime-*.whl（最常见，直接 pip 安装）
+#    pip3 install ./rknn_runtime-*.whl
+# B) 从 Rockchip 的 rknn-toolkit2/runtime 包中找到 aarch64 的 whl
+#    pip3 install ./rknn_toolkit2_runtime-*-cp3*-linux_aarch64.whl
+# C) 使用系统已预装的 rknn runtime（少见），只要 python 能 import rknn 即可
+
+# 安装后验证：
+python3 -c "from rknn.api import RKNN; print('RKNN import OK')"
+
+四、运行前必须注意：用“模块方式”启动，保证能 import app
+你在 Windows 上直接运行：
+  python tools/test_rknn_infer.py ...
+会出现：ModuleNotFoundError: No module named 'app'
+原因：当前工作目录/PYTHONPATH 不正确。
+
+正确做法（板端也推荐这么跑）：
+1) 进入仓库根目录（非常关键）
+cd /opt/Yosegment
+
+2) 用 module 方式运行（推荐）
+python3 -m tools.test_rknn_infer --rknn weights/0414_qy++.rknn --image test_input/000000.jpg
+
+或者临时加 PYTHONPATH：
+PYTHONPATH=. python3 tools/test_rknn_infer.py --rknn weights/0414_qy++.rknn --image test_input/000000.jpg
+
+五、RKNN 推理类说明
+代码位置：app/inference/rknn_realtime.py
+类名：RknnRealtimeSegmenter
+
+默认模型路径：
+- weights/0414_qy++.rknn
+
+输入格式切换：
+- 默认 input_format=nchw_fp32：RGB + NCHW + float32 + /255（与原 onnx_realtime 前处理一致）
+- 若你的 .rknn 构建时使用 NHWC uint8 输入，则运行时加：
+  --input-format nhwc_u8
+
+六、快速验证（最小闭环）
+在 RK3588 板端执行（示例流程，假设你把仓库放在 /opt/Yosegment）：
+
+# 1) 进入仓库
+cd /opt/Yosegment
+
+# 2) 确认模型文件已存在
+ls -lh weights/0414_qy++.rknn
+
+# 3) 验证 rknn python 包可用
+python3 -c "from rknn.api import RKNN; print('RKNN import OK')"
+
+# 4) 运行最小推理验证
+python3 -m tools.test_rknn_infer \
+  --rknn weights/0414_qy++.rknn \
+  --image test_input/000000.jpg \
+  --imgsz 640
+
+# 5) 若你的 .rknn 构建时是 NHWC uint8 输入，改为：
+# python3 -m tools.test_rknn_infer --rknn weights/0414_qy++.rknn --image test_input/000000.jpg --input-format nhwc_u8
+
+六.1、接 USB / MIPI 摄像头实时运行（带显示环境）
+说明：该功能入口在 `app/planning/realtime_pathplan.py`，source 支持：
+- 摄像头索引：0 / 1 / ...
+- RTSP/HTTP 流
+- 视频文件、图片、目录
+
+ONNX 后端示例（CPU/或OpenCV-DNN）：
+python3 -m app.planning.realtime_pathplan \
+  --source 0 \
+  --weights ./weights/0414_qy++.onnx \
+  --data ./data/my.yaml \
+  --view
+
+RKNN 后端示例（NPU 推理）：
+python3 -m app.planning.realtime_pathplan \
+  --source 0 \
+  --weights ./weights/0414_qy++.rknn \
+  --backend rknn \
+  --rknn-input-format nchw_fp32 \
+  --data ./data/my.yaml \
+  --view
+
+如果你的 .rknn 是按 NHWC uint8 输入构建：
+python3 -m app.planning.realtime_pathplan \
+  --source 0 \
+  --weights ./weights/0414_qy++.rknn \
+  --backend rknn \
+  --rknn-input-format nhwc_u8 \
+  --data ./data/my.yaml \
+  --view
+
+无显示环境（SSH 纯命令行）建议：
+- 不加 --view（避免 cv2.imshow 报错），只保存输出视频到 runs/pathplan/...
+- 或使用 vnc/wayland/x11 转发确保有显示服务
+
+成功标志：
+- 输出 mask_entries=... 且不报错
+
+七、常见问题排查
+1) 报错：无法从 RKNN 输出中识别 prediction/proto
+- 说明 .rknn 的输出张量维度/顺序与当前解析假设不一致。
+- 处理：把报错里 outputs=[(shape1), (shape2), ...] 发回来，我再帮你调整解析逻辑。
+
+2) 报错：ModuleNotFoundError: No module named 'rknn'
+- 说明板端没装 rknn runtime Python 包。
+
+3) mask 为空/很碎
+- 多半是量化/校准集问题，或前处理（RGB/BGR、归一化、输入布局）与构建模型不一致。
+- 优先确认 input_format 是否正确。
+
+八、关于“后处理是否能用多核CPU加速”（NMS + mask解码）
+结论（当前仓库实现）：
+- 目前后处理是纯 Python + NumPy + OpenCV resize，默认不会显式创建多线程。
+- NumPy/OpenCV 底层可能会用多线程（取决于你安装的 OpenBLAS / MKL / OpenCV 编译选项），但在 ARM 板端经常是单线程或线程数受限。
+
+可行的加速方向（按优先级）：
+1) 优先减少后处理计算量
+- 调高 conf_thres，减少候选框数量（scores 过滤越早越好）。
+- 降低 max_det。
+- 若只关心少数类别，用 classes 过滤。
+
+2) 多进程/多线程并行（对 Python 代码本身）
+- 由于后处理包含较多 Python 循环（例如按类别做 NMS、逐个 mask crop），使用多线程通常受 GIL 限制收益有限。
+- 若要吃满多核，建议用 multiprocessing（多进程）按帧并行：一个进程负责推理，另一个进程负责后处理/规划，做流水线。
+
+3) 将后处理下沉到 C++/Cython/Numba
+- 把 NMS 和 mask 解码改成 C++ 扩展或 numba jit，可显著提升单帧延迟。
+
+4) 让模型输出更“友好”
+- 如果在导出/转换阶段能把 NMS 融合进模型（部分框架支持），板端只做少量后处理，CPU 压力会小很多。
