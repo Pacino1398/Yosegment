@@ -54,18 +54,19 @@ python3 -m app.planning.realtime_pathplan \
   --data ./data/my.yaml
 
 # 有桌面环境显示窗口：
-# python3 -m app.planning.realtime_pathplan \
-#   --source 0 \
-#   --weights ./weights/0414_qy++.rknn \
-#   --backend rknn \
-#   --rknn-input-format nchw_fp32 \
-#   --data ./data/my.yaml \
-#   --view
+ python3 -m app.planning.realtime_pathplan \
+   --source 0 \
+   --weights ./weights/0414_qy++.rknn \
+   --backend rknn \
+   --rknn-input-format nchw_fp32 \
+   --data ./data/my.yaml \
+   --view
 
 # RTSP
-# python3 -m app.planning.realtime_pathplan \
-#   --source rtsp://user:pass@ip:554/xxx \
-#   --weights ./weights/0414_qy++.rknn \
-#   --backend rknn \
-#   --rknn-input-format nchw_fp32 \
-#   --data ./data/my.yaml
+ python3 -m app.planning.realtime_pathplan \
+   --source rtsp://user:pass@ip:554/xxx \
+   --weights ./weights/0414_qy++.rknn \
+   --backend rknn \
+   --rknn-input-format nchw_fp32 \
+   --data ./data/my.yaml
+   
