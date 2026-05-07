@@ -81,11 +81,14 @@ class RknnRealtimeSegmenter:
         input_format: str = "nchw_fp32",
     ):
         try:
-            # rknn_runtime is the lightweight runtime for board-side inference.
-            from rknn.api import RKNN  # type: ignore
+            # Board-side inference (recommended): rknn-toolkit-lite2
+            # pip install rknn-toolkit-lite2
+            from rknnlite.api import RKNNLite as RKNN  # type: ignore
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
-                "RKNN realtime 推理需要在板端安装 rknn_runtime (Python)，例如 rknn-toolkit2 runtime wheel。"
+                "RKNN 板端推理需要安装 rknn-toolkit-lite2（提供 rknnlite.api.RKNNLite）。"
+                "请在板端执行：pip install rknn-toolkit-lite2，然后验证："
+                "python3 -c \"from rknnlite.api import RKNNLite; print('RKNNLite import OK')\""
             ) from exc
 
         weights_path = get_default_rknn_weights() if weights is None else Path(weights)
