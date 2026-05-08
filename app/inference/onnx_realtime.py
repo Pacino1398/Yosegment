@@ -42,6 +42,30 @@ def get_default_onnx_weights() -> Path:
     return default_onnx.resolve()
 
 
+def get_default_realtime_weights() -> Path:
+    """获取实时推理的默认权重文件（支持.onnx 和.rknn）。"""
+    # 优先查找 .rknn 文件
+    default_rknn = DEFAULT_CONFIG.default_weights.with_suffix(".rknn")
+    if default_rknn.exists():
+        return default_rknn.resolve()
+    
+    # 查找 .onnx 文件
+    default_onnx = DEFAULT_CONFIG.default_weights.with_suffix(".onnx")
+    if default_onnx.exists():
+        return default_onnx.resolve()
+    
+    # 查找所有候选文件
+    candidates_rknn = sorted(DEFAULT_CONFIG.default_weights.parent.glob("*.rknn"))
+    if candidates_rknn:
+        return candidates_rknn[0].resolve()
+    
+    candidates_onnx = sorted(DEFAULT_CONFIG.default_weights.parent.glob("*.onnx"))
+    if candidates_onnx:
+        return candidates_onnx[0].resolve()
+    
+    return default_onnx.resolve()
+
+
 def get_default_data_yaml() -> Path:
     return _resolve_manual_path(MANUAL_DATA_YAML, DEFAULT_CONFIG.data_yaml)
 
