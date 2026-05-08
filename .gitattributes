@@ -1,3 +1,0 @@
-weights/*.rknn !text !filter !merge !diff
-*.pt !text !filter !merge !diff
-*.weights !text !filter !merge !diff
