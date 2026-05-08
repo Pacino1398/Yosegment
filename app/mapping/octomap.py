@@ -488,7 +488,7 @@ def get_default_mask_dir() -> Path:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build and display a local 2.5D map view from segmentation masks.")
     parser.add_argument("--mask-dir", type=str, default=None, help="Directory containing mask PNG files.")
-    parser.add_argument("--grid-scale", type=int, default=DEFAULT_CONFIG.default_grid_scale, help="Pixel-to-grid scale.")
+    parser.add_argument("--grid-scale", type=float, default=DEFAULT_CONFIG.default_grid_scale, help="Pixel-to-grid scale.")
 
     # Optional: pixel-domain tiling (xywh in pixel coordinates) for each mask instance.
     parser.add_argument("--tile-w-px", type=int, default=None, help="Tile width in pixels for xywh tiling export.")

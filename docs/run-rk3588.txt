@@ -1,6 +1,6 @@
 YOSEGMENT RK3588（Ubuntu aarch64）板端部署/运行指令（rknnlite）
 
-0) 进入工程目录
+# 必须在仓库根目录执行（否则可能 No module named 'app'）
 cd /opt/Yosegment
 
 1) 系统依赖
@@ -23,11 +23,6 @@ python3 -m pip install -U rknn-toolkit-lite2
 python3 -c "from rknnlite.api import RKNNLite; print('RKNNLite import OK')"
 
 5) 准备文件（相对仓库根目录）
-# 至少需要：
-# - app/
-# - tools/
-# - data/my.yaml
-# - weights/0414_qy++.rknn
 ls -lh data/my.yaml
 ls -lh weights/0414_qy++.rknn
 
@@ -63,10 +58,9 @@ python3 -m app.planning.realtime_pathplan \
    --view
 
 # RTSP
- python3 -m app.planning.realtime_pathplan \
-   --source rtsp://user:pass@ip:554/xxx \
-   --weights ./weights/0414_qy++.rknn \
-   --backend rknn \
-   --rknn-input-format nchw_fp32 \
-   --data ./data/my.yaml
-   
+# python3 -m app.planning.realtime_pathplan \
+#   --source rtsp://user:pass@ip:554/xxx \
+#   --weights ./weights/0414_qy++.rknn \
+#   --backend rknn \
+#   --rknn-input-format nchw_fp32 \
+#   --data ./data/my.yaml

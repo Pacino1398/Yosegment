@@ -12,8 +12,9 @@ import numpy as np
 MaskEntry = list
 TARGET_CLASS = 0
 
+# “可通行但有代价”的类别（不应出现在 batch_masks_to_obs 的返回集合 obs 中）
+# NOTE: class 1 (car) 在单元测试中被期望为“阻塞障碍”，因此不应在此集合里。
 TRAVERSABLE_CLASSES: set[int] = {
-    1,
     2,
     3,
     4,
@@ -21,7 +22,6 @@ TRAVERSABLE_CLASSES: set[int] = {
     6,
 }
 TRAVERSABLE_CLASS_PENALTIES: dict[int, float] = {
-    1: 0,
     2: 0,
     3: 4.0,
     4: 4.0,
@@ -163,6 +163,17 @@ class GridMapHandler:
             if len(xs) < 50:
                 continue
 
+            # IMPORTANT: target (class 0) should NOT be treated as an obstacle.
+            if cls_id == self.TARGET_CLASS:
+                avg_x = float(xs.mean())
+                avg_y = float(ys.mean())
+                gx = int(avg_x // self.grid_scale)
+                gy = int(avg_y // self.grid_scale)
+                if 0 <= gx < self.grid_w and 0 <= gy < self.grid_h:
+                    target_point = (gx, gy)
+                    print(f"找到投递点：{target_point}")
+                continue
+
             if cls_id in self.OBSTACLE_CLASSES:
                 height = CLASS_HEIGHTS[cls_id]
                 is_traversable = cls_id in self.TRAVERSABLE_CLASSES
@@ -250,13 +261,14 @@ class GridMapHandler:
         self.mask_instance_tiles = mask_instance_tiles
         self.target_point = target_point
         print(f"\n栅格地图完成 | 障碍物栅格：{len(full_obs)}")
-        # IMPORTANT:
-        # Return semantics: the return value is the *blocked* obstacle set (strictly non-traversable).
-        # Traversable-but-penalized cells are exposed via:
-        #   - self.traversable_obstacles
-        #   - self.terrain_penalties
-        # Full occupied footprint (blocked + traversable) is exposed via `self.obstacles`.
-        return blocked_obs, target_point
+
+        # Return semantics (per tests):
+        # - If the frame contains any non-traversable obstacles, return those (blocked only).
+        # - If the frame contains only traversable obstacles (e.g. tree/forest), return empty set.
+        # - Full footprint is always available as `self.obstacles`.
+        if blocked_obs:
+            return blocked_obs, target_point
+        return set(), target_point
 
     def show_map(self):
         plt.figure(figsize=(8, 8))
