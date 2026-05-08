@@ -1,8 +1,8 @@
-# OctoMap/occ2d/z-band 通过 ROS2 话题发布（Yosegment）
+# OctoMap 通过 ROS2 话题发布（Yosegment）
 
-本文说明如何把 `app/mapping/octomap.py` 生成的地图结果，通过 ROS2 话题发布出去，便于 RViz2 可视化/下游规划节点订阅。
+本文说明如何把 `app/mapping/octomap.py` 生成的 2.5D 柱状地图结果，通过 ROS2 以标准 `octomap_msgs/Octomap` 消息格式发布，便于 RViz2 可视化和下游规划节点订阅。
 
-> 说明：当前仓库主要以 Python 管线为主，ROS2 部分采取“可选依赖、延迟 import”的方式，避免在未安装 ROS2 时导入失败。
+> 说明：当前仓库主要以 Python 管线为主，ROS2 部分采取"可选依赖、延迟 import"的方式，避免在未安装 ROS2 时导入失败。
 
 ---
 
@@ -13,9 +13,9 @@
 文件：`app/ros2/occ_zband_publisher.py`
 
 发布话题（默认）：
-
-- `/yoseg/occ2d_grid`：`nav_msgs/OccupancyGrid`
-- `/yoseg/z_band_markers`：`visualization_msgs/MarkerArray`
+- `/yoseg/octomap`：`octomap_msgs/Octomap`（标准 3D 八叉树地图，主推）
+- `/yoseg/occ2d_grid`：`nav_msgs/OccupancyGrid`（可选保留）
+- `/yoseg/z_band_markers`：`visualization_msgs/MarkerArray`（可选保留）
 
 运行示例：
 
@@ -24,11 +24,11 @@ python -m app.ros2.occ_zband_publisher \
   --npz runs/debug/map_v0.npz \
   --frame-id map \
   --resolution 0.1 \
-  --rate 2
+  --rate 2 \
+  --publish-octomap
 ```
 
 其中 `.npz` 需要包含：
-
 - `occ2d`: `uint8[H,W]`
 - `z_band2d`: `float32/float64[H,W,2]`（low/high）
 
@@ -37,13 +37,12 @@ python -m app.ros2.occ_zband_publisher \
 文件：`app/ros2/realtime_occ_zband_node.py`
 
 订阅：
-
 - `/yoseg/octomap_snapshot_json`：`std_msgs/String`（JSON）
 
 发布：
-
-- `/yoseg/occ2d_grid`：`nav_msgs/OccupancyGrid`
-- `/yoseg/z_band_markers`：`visualization_msgs/MarkerArray`
+- `/yoseg/octomap`：`octomap_msgs/Octomap`（主推）
+- `/yoseg/occ2d_grid`：`nav_msgs/OccupancyGrid`（可选）
+- `/yoseg/z_band_markers`：`visualization_msgs/MarkerArray`（可选）
 
 运行示例：
 
@@ -51,14 +50,15 @@ python -m app.ros2.occ_zband_publisher \
 python -m app.ros2.realtime_occ_zband_node \
   --sub-topic /yoseg/octomap_snapshot_json \
   --frame-id map \
-  --resolution 0.1
+  --resolution 0.1 \
+  --publish-octomap
 ```
 
 ---
 
 ## 2. Snapshot JSON 格式（与 OctoMap.export_planner_snapshot() 对齐）
 
-节点 `realtime_occ_zband_node.py` 采用“best-effort”解析，至少需要字段：
+节点 `realtime_occ_zband_node.py` 采用"best-effort"解析，至少需要字段：
 
 ```json
 {
@@ -85,12 +85,18 @@ python -m app.ros2.realtime_occ_zband_node \
 
 ## 3. RViz2 可视化建议
 
-### 3.1 OccupancyGrid
+### 3.1 Octomap（主推）
 
 - Fixed Frame：`map`（与 `--frame-id` 保持一致）
+- 添加 Display：`Octomap`，订阅 `/yoseg/octomap`
+- 可显示完整 3D 占据信息
+
+### 3.2 OccupancyGrid（可选保留）
+
+- Fixed Frame：`map`
 - 添加 Display：`Map`，订阅 `/yoseg/occ2d_grid`
 
-### 3.2 z-band MarkerArray
+### 3.3 z-band MarkerArray（可选保留）
 
 - 添加 Display：`MarkerArray`，订阅 `/yoseg/z_band_markers`
 
@@ -102,9 +108,9 @@ python -m app.ros2.realtime_occ_zband_node \
 
 如果你的实时分割/建图与 ROS2 节点在同一 Python 进程，推荐不要走 JSON/订阅模式：
 
-- 直接在你的循环里创建一个 `rclpy.node.Node`
-- 实例化 `OccZBandPublisher`
-- 每帧调用 `publish(occ2d, z_band2d)`
+1. 直接在你的循环里创建一个 `rclpy.node.Node`
+2. 实例化 `OccZBandPublisher`
+3. 每帧调用 `publish(occ2d, z_band2d)`
 
 这样可避免序列化/反序列化和 ROS subscription 的额外开销。
 
@@ -120,5 +126,14 @@ python -m app.ros2.realtime_occ_zband_node \
 - `geometry_msgs`
 - `std_msgs`
 - `builtin_interfaces`
+- `octomap_msgs`
+- `octomap` (可选，用于 Python 端 octomap 操作)
 
 Windows 上一般不建议跑 ROS2；更常见是 Ubuntu 端运行 ROS2 节点。
+
+安装依赖：
+
+```bash
+# Ubuntu/Debian (ROS2 Humble)
+sudo apt install ros-humble-octomap-msgs ros-humble-octomap
+pip install octomap

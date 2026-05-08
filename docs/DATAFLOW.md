@@ -1,6 +1,6 @@
 # Yosegment 数据流图（地图 ↔ 规划 ↔ 导出/ROS2）
 
-本文档把你现在工程里 **分割结果 → 地图（grid）→ 路径规划**，以及 **grid → 2.5D columns → occ2d/z_band2d → ROS2** 两条链路，整理成一张可对照代码的“数据流图”。
+本文档把你现在工程里 **分割结果 → 地图（grid）→ 路径规划**，以及 **grid → 2.5D columns → occ2d/z_band2d → ROS2 Octomap** 两条链路，整理成一张可对照代码的"数据流图"。
 
 ---
 
@@ -10,34 +10,28 @@
 
 ```mermaid
 flowchart TD
-  A[分割输出
-masks/*.png 或内存 mask_entries] --> B[加载/组织 mask_entries]
+    A[分割输出 masks/*.png 或内存 mask_entries] --> B[加载/组织 mask_entries]
 
-  B --> C[GridMapHandler.batch_masks_to_obs
-(构建 2D 栅格语义)]
+    B --> C[GridMapHandler.batch_masks_to_obs (构建 2D 栅格语义)]
 
-  C -->|blocked_obstacles(set)| D[DStarLite
-2D 路径规划]
-  C -->|traversable_obstacles(set)| D
-  C -->|terrain_penalties(dict)| D
-  C -->|target_point| D
+    C -->|blocked_obstacles(set)| D[DStarLite 2D 路径规划]
+    C -->|traversable_obstacles(set)| D
+    C -->|terrain_penalties(dict)| D
+    C -->|target_point| D
 
-  C --> E[OctoMap
-(2.5D columns)]
+    C --> E[OctoMap (2.5D columns)]
 
-  E --> F[octomap_export.py
-导出 npz]
-  F --> G[occ2d(uint8[H,W])]
-  F --> H[z_band2d(float32[H,W,2])]
+    E --> F[octomap_export.py 导出 npz]
+    F --> G[occ2d(uint8[H,W])]
+    F --> H[z_band2d(float32[H,W,2])]
 
-  G --> I[ROS2 OccupancyGrid 发布]
-  H --> J[ROS2 MarkerArray 发布
-(竖直危险段)]
+    G --> I[ROS2 Octomap 发布]
+    H --> I
 ```
 
 ---
 
-## 2. 关键“数据对象”说明（你在代码里会看到它们频繁出现）
+## 2. 关键"数据对象"说明（你在代码里会看到它们频繁出现）
 
 ### 2.1 mask_entries（分割结果的统一中间格式）
 - 形态：`list[list]`（每个元素代表一个 instance mask）
@@ -57,7 +51,7 @@ masks/*.png 或内存 mask_entries] --> B[加载/组织 mask_entries]
 ### 2.3 DStarLite 消费地图的方式
 在 `DStarLite.__init__`：
 - `obs`（传入的 blocked）会被处理为：`self.obs = set(obs) - passable_obs`
-  - 即 traversable 会从绝对障碍里剔除，允许通行
+- 即 traversable 会从绝对障碍里剔除，允许通行
 - `cost(a,b)` 会把 `terrain_penalties[b]` 加进总代价
 
 ### 2.4 OctoMap/columns（2.5D 表达）
@@ -99,13 +93,17 @@ masks/*.png 或内存 mask_entries] --> B[加载/组织 mask_entries]
   - 导出 `occ2d + z_band2d` 到 `.npz`
 
 ### E) ROS2 发布（Phase2 v0）
-- `app/mapping/ros2_publish_occ_zband.py`
-  - 发布 `/yoseg/occ2d_grid`（OccupancyGrid）
-  - 发布 `/yoseg/z_band_markers`（MarkerArray）
+- `app/ros2/occ_zband_publisher.py`
+  - 发布 `/yoseg/octomap`（octomap_msgs/Octomap，主推）
+  - 发布 `/yoseg/occ2d_grid`（可选保留）
+  - 发布 `/yoseg/z_band_markers`（可选保留）
+- `app/ros2/realtime_occ_zband_node.py`
+  - 订阅 `/yoseg/octomap_snapshot_json`（JSON snapshot）
+  - 发布 `/yoseg/octomap`（主推）
 
 ---
 
-## 4. 最常见的两条“可运行链路”（对应上图两条分支）
+## 4. 最常见的两条"可运行链路"（对应上图两条分支）
 
 ### 4.1 2D 规划主链路（离线 masks）
 1) `runs/segment/exp*/masks/*.png`
@@ -116,4 +114,4 @@ masks/*.png 或内存 mask_entries] --> B[加载/组织 mask_entries]
 1) `runs/segment/exp*/masks/*.png`
 2) `app/mapping/octomap_export.py`
    - 内部：`GridMapHandler.batch_masks_to_obs` → `OctoMap` → `occ2d/z_band2d`
-3) `app/mapping/ros2_publish_occ_zband.py` 发布到 RViz
+3) `app/ros2/occ_zband_publisher.py` 发布 Octomap 到 RViz

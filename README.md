@@ -50,10 +50,16 @@ python -m app.planning.path_planner
 python -m app.mapping.octomap_export --mask-dir runs/segment/exp2/masks --out-npz runs/debug/map_v0.npz --preview
 ```
 
-- Phase2 v0：在 ROS2 环境发布 `OccupancyGrid + z_band markers`：
+- Phase2 v0：在 ROS2 环境发布 `Octomap`（标准 3D 八叉树地图）：
 
 ```bash
-python -m app.mapping.ros2_publish_occ_zband --npz runs/debug/map_v0.npz --frame-id map --resolution 1.0 --rate 2
+python -m app.ros2.occ_zband_publisher --npz runs/debug/map_v0.npz --frame-id map --resolution 1.0 --rate 2 --publish-octomap
+```
+
+实时订阅 JSON snapshot 发布：
+
+```bash
+python -m app.ros2.realtime_occ_zband_node --sub-topic /yoseg/octomap_snapshot_json --frame-id map --resolution 1.0 --publish-octomap
 ```
 
 ---
