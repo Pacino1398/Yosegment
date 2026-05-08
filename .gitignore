@@ -7,12 +7,12 @@ __pycache__/
 .mypy_cache/
 
 # Runtime outputs
-runs/*/*.jpg
-runs/*/*.mp4
-runs/*/*.txt
-runs/*/*.log
+runs/**/*.jpg
+runs/**/*.mp4
+runs/**/*.txt
+runs/**/*.log
 
-runs/segment/exp1/*.png
+runs/segment/exp1/**/*.png
 
 # Local editor/runtime config
 .vscode/
