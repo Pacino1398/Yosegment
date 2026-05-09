@@ -3,6 +3,7 @@
 Experimental modules
 """
 import math
+import pathlib
 
 import numpy as np
 import torch
@@ -76,7 +77,18 @@ def attempt_load(weights, device=None, inplace=True, fuse=True):
 
     model = Ensemble()
     for w in weights if isinstance(weights, list) else [weights]:
-        ckpt = torch.load(attempt_download(w), map_location='cpu')  # load
+        try:
+            ckpt = torch.load(attempt_download(w), map_location='cpu')  # load
+        except NotImplementedError as e:
+            # Windows compatibility: some checkpoints serialized on Linux may contain PosixPath
+            if "cannot instantiate 'PosixPath'" not in str(e):
+                raise
+            posix_backup = pathlib.PosixPath
+            pathlib.PosixPath = pathlib.WindowsPath
+            try:
+                ckpt = torch.load(attempt_download(w), map_location='cpu')
+            finally:
+                pathlib.PosixPath = posix_backup
         ckpt = (ckpt.get('ema') or ckpt['model']).to(device).float()  # FP32 model
 
         # Model compatibility updates
